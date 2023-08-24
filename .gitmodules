@@ -1,0 +1,3 @@
+[submodule "diff_pd"]
+	path = lib/physical_engine/diff_pd_public
+	url = https://github.com/mit-gfx/diff_pd_public.git
