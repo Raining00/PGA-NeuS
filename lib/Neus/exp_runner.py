@@ -12,9 +12,9 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
-from models.dataset_json import Dataset
-from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
-from models.renderer import NeuSRenderer
+from dataset_json import Dataset
+from fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
+from renderer import NeuSRenderer
 
 
 class Runner:
@@ -385,7 +385,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--conf', type=str, default='./confs/base.conf')
+    parser.add_argument('--conf', type=str, default='../../config/neus_conf/base.conf')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
     parser.add_argument('--is_continue', default=False, action="store_true")
@@ -406,19 +406,19 @@ if __name__ == '__main__':
         img_idx_0 = int(img_idx_0)
         img_idx_1 = int(img_idx_1)
         runner.interpolate_view(img_idx_0, img_idx_1)
+        test_path = "../../config/neus_conf"
 
-#  example cmd in rebuilding:
+#  example cmd in reconstruction:
 """
 conda activate neus
-cd D:/gitwork/NeuS
 D:
-python exp_runner.py --mode train --conf ./confs/womask.conf --case bird_ss --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js.conf --case sim_ball --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk.conf --case r_bk --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single.conf --case real_world_normal --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single.conf --case real_world_normal
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_sparse.conf --case real_world_sparse
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
+python exp_runner.py --mode train --conf ../../config/neus_conf/womask.conf --case bird_ss --is_continue
+python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js.conf --case sim_ball --is_continue
+python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk.conf --case r_bk --is_continue
+python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single.conf --case real_world_normal --is_continue
+python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single.conf --case real_world_normal
+python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_sparse.conf --case real_world_sparse
+python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
+python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
 
 """
