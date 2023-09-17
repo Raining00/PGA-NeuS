@@ -376,8 +376,18 @@ class Runner:
         writer.release()
 
 
+def neus_runner(conf_dir, case_name, is_continue):
+    """This method aims to pack the main funtion into a callable train function"""
+    mode = "train" # train first
+    runner = Runner(conf_dir, mode, case_name, is_continue)
+    torch.cuda.set_device(0) # use gpu as default
+    runner.train()
+    return runner
+
+
+
 if __name__ == '__main__':
-    print('Hello Wooden')
+    print('neus start! -Tech otakus save the world')
 
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
@@ -385,15 +395,14 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--conf', type=str, default='../../config/neus_conf/base.conf')
+    parser.add_argument('--conf', type=str, default='../../config/neus_conf/wmask_js_bk_single_multi_qrs.conf')
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--mcube_threshold', type=float, default=0.0)
-    parser.add_argument('--is_continue', default=False, action="store_true")
-    parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
+    parser.add_argument('--is_continue', default=False, action="store_true")
+    parser.add_argument('--mcube_threshold', type=float, default=0.0)
+    parser.add_argument('--gpu', type=int, default=0)
 
     args = parser.parse_args()
-
     torch.cuda.set_device(args.gpu)
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
 
@@ -412,13 +421,13 @@ if __name__ == '__main__':
 """
 conda activate neus
 D:
-python exp_runner.py --mode train --conf ../../config/neus_conf/womask.conf --case bird_ss --is_continue
-python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js.conf --case sim_ball --is_continue
-python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk.conf --case r_bk --is_continue
-python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single.conf --case real_world_normal --is_continue
-python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single.conf --case real_world_normal
-python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_sparse.conf --case real_world_sparse
-python exp_runner.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-python exp_runner.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
+python neus_main.py --mode train --conf ../../config/neus_conf/womask.conf --case bird_ss --is_continue
+python neus_main.py --mode train --conf ../../config/neus_conf/wmask_js.conf --case sim_ball --is_continue
+python neus_main.py --mode train --conf ../../config/neus_conf/womask_js_bk.conf --case r_bk --is_continue
+python neus_main.py --mode train --conf ../../config/neus_conf/womask_js_bk_single.conf --case real_world_normal --is_continue
+python neus_main.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single.conf --case real_world_normal
+python neus_main.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_sparse.conf --case real_world_sparse
+python neus_main.py --mode train --conf ../../config/neus_conf/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
+python neus_main.py --mode train --conf ../../config/neus_conf/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
 
 """
