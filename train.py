@@ -22,5 +22,7 @@ if __name__ == '__main__':
 
 
 
+
+
     #TODO:train dynamic
     print('physical parameters of moving object')
