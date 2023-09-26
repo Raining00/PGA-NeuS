@@ -17,6 +17,18 @@ from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
 
+def print_error(*message):
+    print('\033[91m', 'ERROR ', *message, '\033[0m')
+
+def print_ok(*message):
+    print('\033[92m', *message, '\033[0m')
+
+def print_warning(*message):
+    print('\033[93m', *message, '\033[0m')
+
+def print_info(*message):
+    print('\033[96m', *message, '\033[0m')
+
 
 def calc_new_pose(setting_path):
     # TODO: read pose and movement from one json file and calc new pose
@@ -40,7 +52,7 @@ def calc_new_pose(setting_path):
     transform_matrix[0:3, 0:3] = rotate_mat
     transform_matrix[0:3, 3] = t
     transform_matrix[3, 3] = 1.0
-
+    
     return transform_matrix @ original_mat
 
 
@@ -363,6 +375,7 @@ class Runner:
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+
             background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
 
             render_out = self.renderer.render(rays_o_batch,
@@ -434,6 +447,44 @@ class Runner:
         print("Saving render img at " + render_path)
         cv.imwrite(render_path, img)
         return
+    
+    def render_motion(self, setting_json_path):
+        with open(setting_json_path, "r") as json_file:
+            motion_data = json.load(json_file)
+        if motion_data["frames"] == None :
+            print_error("must provite a sequence of motion information")
+        frames = motion_data["frames"]
+        print_info(f"{frames} frames will be rendered.")
+        motion_transforms = motion_data["results"]
+        original_mat = motion_data["1_1_M"]
+        if original_mat == None:
+            print_error("static camera information must be provided")
+        for i in tqdm(range(frames)):
+            motion_transform = motion_transforms[i]
+            assert i == motion_transform["frame_id"], "invalid frame sequence"
+            t, q = motion_transform['translation'], motion_transform['rotation'], 
+            w, x, y, z = q
+            rotate_mat = np.array([
+                [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)]
+            ])
+            transform_matrix = np.zeros((4, 4))
+            transform_matrix[0:3, 0:3] = rotate_mat
+            transform_matrix[0:3, 3] = t
+            transform_matrix[3, 3] = 1.0
+            transform_matrix = inverse_matrix = np.linalg.inv(transform_matrix)
+            camera_pose = transform_matrix @ original_mat
+            img = self.render_novel_image_at(camera_pose, 2)
+            set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
+            file_name_with_extension = os.path.basename(setting_json_path)
+            case_name, file_extension = os.path.splitext(file_name_with_extension)
+            render_path = f"{set_dir}/{case_name}{i:04d}.png"
+            print("Saving render img at " + render_path)
+            cv.imwrite(render_path, img)
+            print_info(f"finish rendering frame:{i}")
+        
+        print_ok(f"{frames} images has been rendered!")
 
 
 if __name__ == '__main__':
@@ -464,6 +515,8 @@ if __name__ == '__main__':
         runner.validate_mesh(world_space=False, resolution=512, threshold=args.mcube_threshold)
     elif args.mode == 'render_at':
         runner.save_render_pic_at(args.render_at_pose_path)
+    elif args.mode == 'render_motion':
+        runner.render_motion(args.render_at_pose_path)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
