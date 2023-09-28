@@ -476,6 +476,9 @@ class Runner:
             transform_matrix = inverse_matrix = np.linalg.inv(transform_matrix)
             camera_pose = transform_matrix @ original_mat
             img = self.render_novel_image_at(camera_pose, 2)
+            # img loss
+            
+
             set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
             file_name_with_extension = os.path.basename(setting_json_path)
             case_name, file_extension = os.path.splitext(file_name_with_extension)
