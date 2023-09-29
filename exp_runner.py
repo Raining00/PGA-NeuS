@@ -16,6 +16,7 @@ from pyhocon import ConfigFactory
 from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
+from models.rigid_body import rigid_body_simulator
 
 def print_error(*message):
     print('\033[91m', 'ERROR ', *message, '\033[0m')

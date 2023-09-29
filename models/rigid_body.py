@@ -440,7 +440,7 @@ class rigid_body_simulator:
     def backwards(self):
         self.clear_gradients()
 
-        self.compute_loss.grad()
+        # self.compute_loss.grad()
         for i in reversed(range(self.frames * self.substep - 1)):
             self.step.grad(i)
     
