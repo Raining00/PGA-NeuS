@@ -455,12 +455,11 @@ class rigid_body_simulator:
         translation = np.zeros([3],dtype=np.float32)
         quat = np.zeros([4], dtype=np.float32)
         self.get_transroam(translation=translation, quat=quat)
-        return torch.from_numpy(translation).to_device(self.device), \
-               torch.from_numpy(quat).to_device(self.device)
+        return torch.from_numpy(translation).to(self.device), \
+               torch.from_numpy(quat).to(self.device)
 
     def backwards(self):
         self.clear_gradients()
-
         # self.compute_loss.grad()
         for i in reversed(range(self.frames * self.substep - 1)):
             self.update_state.grad(i)
@@ -479,12 +478,12 @@ class rigid_body_simulator:
         init_omega_grad[0] = self.init_omega.grad[None]
         ke_grad[0] = self.ke.grad[None]
         mu_grad[0] = self.mu.grad[None]
-        return torch.from_numpy(init_v_grad).to_device(self.device), \
-                torch.from_numpy(init_omega_grad).to_device(self.device), \
-                torch.from_numpy(ke_grad).to_device(self.device), \
-                torch.from_numpy(mu_grad).to_device(self.device). \
-                torch.from_numpy(translation_grad).to_device(self.device), \
-                torch.from_numpy(quat_grad).to_device(self.device)
+        return torch.from_numpy(init_v_grad).to(self.device), \
+                torch.from_numpy(init_omega_grad).to(self.device), \
+                torch.from_numpy(ke_grad).to(self.device), \
+                torch.from_numpy(mu_grad).to(self.device). \
+                torch.from_numpy(translation_grad).to(self.device), \
+                torch.from_numpy(quat_grad).to(self.device)
     
     def train(self):
         loss = []
@@ -493,6 +492,8 @@ class rigid_body_simulator:
             self.clear_gradients()
             with ti.ad.Tape(loss=self.loss, validation=False):
                 l = self.forward()
+            # self.loss.grad[None] = 1.0
+            # self.backwards()
             if l < 1e-6:
                 break
             loss.append(l)
