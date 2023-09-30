@@ -238,6 +238,7 @@ class rigid_body_simulator:
         self.scene.set_camera(self.camera)
         # simulation flag
         self.pause = True
+        self.device = 'cuda:0'
 
     def run(self):
         i = 0
@@ -396,6 +397,8 @@ class rigid_body_simulator:
 
     @ti.kernel
     def clear_gradients(self):
+        self.init_v.grad[None] = 0.0
+        self.init_omega.grad[None] =0.0
         self.x.grad.fill(0.0)
         self.v.grad.fill(0.0)
         self.omega.grad.fill(0.0)
@@ -426,6 +429,20 @@ class rigid_body_simulator:
         self.init_v[None] -= self.init_v.grad[None] * self.learning_rate
         self.init_omega[None] -= self.init_omega.grad[None] * self.learning_rate
         
+    @ti.kernel
+    def get_simulation_grad(self, translation_grad:ti.types.ndarrays(), quat_grad:ti.types.ndarrays()):
+        for f in range(self.frames):
+            for i in range(3):
+                translation_grad[f, i] = self.translation.grad[f][i]
+            for j in range(4):
+                quat_grad[f, j] = self.quat.grad[f][j]
+
+    @ti.kernel
+    def get_transroam(self, translation:ti.types.ndarray(), quat:ti.types.ndarray()):
+        for i in range(3):
+            translation[i] = self.translation[self.frames-1][i]
+            quat[i] = self.quat[self.frames-1][i]
+        quat[3] = self.quat[self.frames-1][3]
 
     def forward(self):
         self.set_v()
@@ -434,15 +451,40 @@ class rigid_body_simulator:
             self.collision_detect(i)
             self.update_state(i)
             ti.sync()
-        self.compute_loss()
-        return self.loss[None]
+        # self.compute_loss()
+        translation = np.zeros([3],dtype=np.float32)
+        quat = np.zeros([4], dtype=np.float32)
+        self.get_transroam(translation=translation, quat=quat)
+        return torch.from_numpy(translation).to_device(self.device), \
+               torch.from_numpy(quat).to_device(self.device)
 
     def backwards(self):
         self.clear_gradients()
 
         # self.compute_loss.grad()
         for i in reversed(range(self.frames * self.substep - 1)):
-            self.step.grad(i)
+            self.update_state.grad(i)
+            self.collision_detect.grad(i)
+            self.pre_compute.grad(i)
+        self.set_v.grad()
+
+        translation_grad = np.zeros([self.frames, 3],dtype=np.float32)
+        quat_grad = np.zeros([self.frames, 4], dtype=np.float32)
+        self.get_simulation_grad(translation_grad=translation_grad, quat_grad=quat_grad) 
+        init_v_grad = np.zeros([1], dtype=np.float32)
+        init_omega_grad = np.zeros([1], dtype=np.float32)
+        ke_grad = np.zeros([1], dtype=np.float32)
+        mu_grad = np.zeros([1], dtype=np.float32)
+        init_v_grad[0] = self.init_v.grad[None]
+        init_omega_grad[0] = self.init_omega.grad[None]
+        ke_grad[0] = self.ke.grad[None]
+        mu_grad[0] = self.mu.grad[None]
+        return torch.from_numpy(init_v_grad).to_device(self.device), \
+                torch.from_numpy(init_omega_grad).to_device(self.device), \
+                torch.from_numpy(ke_grad).to_device(self.device), \
+                torch.from_numpy(mu_grad).to_device(self.device). \
+                torch.from_numpy(translation_grad).to_device(self.device), \
+                torch.from_numpy(quat_grad).to_device(self.device)
     
     def train(self):
         loss = []

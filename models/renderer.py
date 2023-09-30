@@ -285,6 +285,9 @@ class NeuSRenderer:
             'gradient_error': gradient_error,
             'inside_sphere': inside_sphere
         }
+    
+
+
 
     def render(self, rays_o, rays_d, near, far, perturb_overwrite=-1, background_rgb=None, cos_anneal_ratio=0.0):
         batch_size = len(rays_o)
@@ -379,6 +382,47 @@ class NeuSRenderer:
             'gradient_error': ret_fine['gradient_error'],
             'inside_sphere': ret_fine['inside_sphere']
         }
+    
+
+    # this funtion is written for dynamic rendering
+    # better to use R-T transform when rendering a single ray, make easier to adapt in the future
+    # rays_gt = rays ground truth [batch_size, 3], infering the ground truth RGB.
+    def render_dynamic(self, rays_o, rays_d, near, far, R, T, rays_gt, rays_mask, perturb_overwrite=-1, background_rgb=None, cos_anneal_ratio=0.0):
+        # apply R to rays_d and T to rays_o, requires grad here
+        batch_size = len(rays_o)
+        T_neg = torch.neg(T)       
+        T_expand = T_neg.expand(batch_size, -1)  # expand the trans
+        rays_o = rays_o + T_expand  # batch_size 3
+        w, x, y, z = R
+        rotate_mat = np.array([
+            [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)]
+        ])
+        rotate_mat = np.linalg.inv(rotate_mat)   # maken an inverse
+        rays_d = torch.matmul(rotate_mat[None, :3, :3], rays_d[:, :, None]).squeeze()  # batch_size, 3
+        # using original rendering function
+        render_out = self.render(rays_o, rays_d, near, far, perturb_overwrite, background_rgb, cos_anneal_ratio)
+        color_fine = color_fine = render_out['color_fine']
+        color_error = (color_fine - rays_gt) * rays_mask 
+        mask_sum = rays_mask.sum() + 1e-6
+        color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction='sum') / mask_sum  # normalize
+        color_fine_loss.backward() # img_loss for refine R & T
+        render_out["R_grad"] = R.gradient()
+        render_out["T_grad"] = T.gradient()
+        render_out["img_loss"] = color_error
+        return render_out
+
+    def quire_gradients(self, pts):
+        count = len(pts)  # pts should be n, 3
+        sdf_nn_output = self.sdf_network(pts)
+        sdf = sdf_nn_output[:, :1]
+        gradients = self.sdf_network.gradient(pts).squeeze()
+        return {
+            "sdf": sdf,
+            "gradients": gradients
+        }
+    
 
     def extract_geometry(self, bound_min, bound_max, resolution, threshold=0.0):
         return extract_geometry(bound_min,
