@@ -227,15 +227,15 @@ class rigid_body_simulator:
 
         # set up ggui
         #create a window
-        self.window = ti.ui.Window(name='Rigid body dynamics', res=(1280, 720), fps_limit=60, pos=(150,150))
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.Camera()
-        self.camera.position(1,2,3)
-        self.camera.lookat(0,0,0)
-        self.camera.up(0,1,0)
-        self.camera.projection_mode(ti.ui.ProjectionMode.Perspective)
-        self.scene.set_camera(self.camera)
+        # self.window = ti.ui.Window(name='Rigid body dynamics', res=(1280, 720), fps_limit=60, pos=(150,150))
+        # self.canvas = self.window.get_canvas()
+        # self.scene = ti.ui.Scene()
+        # self.camera = ti.ui.Camera()
+        # self.camera.position(1,2,3)
+        # self.camera.lookat(0,0,0)
+        # self.camera.up(0,1,0)
+        # self.camera.projection_mode(ti.ui.ProjectionMode.Perspective)
+        # self.scene.set_camera(self.camera)
         # simulation flag
         self.pause = True
         self.device = 'cuda:0'
@@ -430,7 +430,7 @@ class rigid_body_simulator:
         self.init_omega[None] -= self.init_omega.grad[None] * self.learning_rate
         
     @ti.kernel
-    def get_simulation_grad(self, translation_grad:ti.types.ndarrays(), quat_grad:ti.types.ndarrays()):
+    def get_simulation_grad(self, translation_grad:ti.types.ndarray(), quat_grad:ti.types.ndarray()):
         for f in range(self.frames):
             for i in range(3):
                 translation_grad[f, i] = self.translation.grad[f][i]

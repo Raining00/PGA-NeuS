@@ -210,7 +210,12 @@ class Runner:
 
             if self.iter_step % len(image_perm) == 0:
                 image_perm = self.get_image_perm()
-
+                
+    def train_dynamic(self):
+        # TODO use render_dynamic to pass img_loss 
+        self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, 'dynamic_logs'))  
+        return
+        
     def get_image_perm(self):
         return torch.randperm(self.dataset.n_images)
 
@@ -367,7 +372,6 @@ class Runner:
         return img_fine
 
     def render_novel_image_at(self, camera_pose, resolution_level):
-
         rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(camera_pose, resolution_level=resolution_level)
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
@@ -389,6 +393,8 @@ class Runner:
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
 
             del render_out
+        image = cv.imread('dynamic_test/transform0001.png') / 256.0
+        image = torch.from_numpy(image.astype(np.float32)).to(self.device)
 
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine
@@ -478,8 +484,6 @@ class Runner:
             camera_pose = transform_matrix @ original_mat
             img = self.render_novel_image_at(camera_pose, 2)
             # img loss
-            
-
             set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
             file_name_with_extension = os.path.basename(setting_json_path)
             case_name, file_extension = os.path.splitext(file_name_with_extension)
@@ -490,9 +494,98 @@ class Runner:
         
         print_ok(f"{frames} images has been rendered!")
 
+    def train_dynamic(self, setting_json_path):
+        with open(setting_json_path, "r") as json_file:
+            motion_data = json.load(json_file)
+        static_mesh = motion_data["static_mesh_path"]
+
+        # in the future, it need to be replaced as a set of camera poses from real-world data
+        original_mat = motion_data["camera_poses_mat"]
+        if original_mat is None:
+            print_error("static camera information must be provided")
+            original_mat = np.eye((4,4))
+            original_mat[2,3] = -5
+        else:
+            original_mat = np.array(original_mat)
+
+        option = {'frames': 1 ,
+                'ke': 0.1,
+                'mu': 0.8, 
+                'transform': [0.0, 0.0, 0.9985088109970093, 0.0, 0.0, 0.0],
+                'linear_damping': 0.999,
+                'angular_damping': 0.998}
+        # dynamic_observation = rigid_body_simulator(static_mesh, option)
+        # translation, quat = dynamic_observation.forward()
+        translation = np.array([0.0, 0.0, -3 * np.random.random()], dtype=np.float32)
+        # quat = np.random.randn(4).astype(np.float32) * 0.2
+        quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        print_info(f'initial guss translation:{translation}, quat:{quat}')
+        translation = torch.from_numpy(translation).to('cuda:0')
+        quat = torch.from_numpy(quat).to('cuda:0')
+
+        ## TODO: the following code needs to be batchfied as :
+        # for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
+        #     break
+
+        #load the ground truth img
+        # use cv2.IMREAD_COLOR to read image
+        image = cv.imread('./dynamic_test/transform0000.png')
+        resolution_level = 1
+        image_rgb = image / 256.0
+        self.dataset.set_image_w_h(image_rgb.shape[1], image_rgb.shape[0])  # change W & H here
+        image_rgb = (cv.resize(image_rgb, (image_rgb.shape[0] // resolution_level, image_rgb.shape[1] // resolution_level))).clip(0, 255)  #W, H, 3
+
+        image_rgb = torch.from_numpy((image_rgb).astype(np.float32)).to(self.device)
+        image_rgb = image_rgb.transpose(0,1) # should be H, W , 3
+
+        #rays_o, 3
+
+        rays_gt = image_rgb.reshape(-1, 3) # W * H, 3
+        rays_mask = torch.ones_like(rays_gt,dtype=torch.float32)
+
+        rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(original_mat, resolution_level=resolution_level)
+        # import pdb
+        # pdb.set_trace()
+        ## now in batch, H*W/batch, 3
+        rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
+        rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
+
+        rays_gt = rays_gt.split(self.batch_size)
+        rays_mask = rays_mask.split(self.batch_size)
+        translation.requires_grad_(True)
+        quat.requires_grad_(True)
+        color_fine = []
+        out_rgb_fine = []
+        for rays_o_batch, rays_d_batch, rays_gt_batch, rays_mask_batch in zip(rays_o, rays_d, rays_gt, rays_mask):
+            near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            # this render out contains grad & img loss, find out its reaction with phy simualtion
+            render_out = self.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near,far= far, T=translation, R=quat
+                                                                    , cos_anneal_ratio=self.get_cos_anneal_ratio(), background_rgb=background_rgb)
+            color_fine = render_out["color_fine"]
+            color_error = (color_fine - rays_gt_batch)
+            color_error = color_error * rays_mask_batch 
+            mask_sum = rays_mask_batch.sum() + 1e-6
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction='sum') / mask_sum  # normalize
+            color_fine_loss.backward(retain_graph=True) # img_loss for refine R & T
+            R_grad = quat.grad
+            T_grad = translation.grad
+            R_grad = R_grad.to("cpu")
+            T_grad = T_grad.to("cpu")
+            print_info(f'translation_grad:{R_grad}, rotation_grad: {T_grad}')
+
+            out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
+
+            del render_out
+        
+        img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([image_rgb.shape[0], image_rgb.shape[1], 3]) * 256).clip(0, 255).astype(np.uint8)
+        cv.imwrite('dynamic_train.png', img_fine)
+        print_ok('dynamic train has done!')
+        return
+
 
 if __name__ == '__main__':
-    print('Hello Wooden')
+    print('Genshin Nerf, start!!!')
 
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
@@ -521,6 +614,8 @@ if __name__ == '__main__':
         runner.save_render_pic_at(args.render_at_pose_path)
     elif args.mode == 'render_motion':
         runner.render_motion(args.render_at_pose_path)
+    elif args.mode == 'train_dynamic':
+        runner.train_dynamic(args.render_at_pose_path)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
