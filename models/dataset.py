@@ -164,6 +164,27 @@ class Dataset:
         self.W = w
         self.H = h
 
+    def gen_random_rays_at_pose_mat(self, transform_matrix, resolution_level=1):
+        pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+        pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+        transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32))
+        transform_matrix = transform_matrix.cuda()  # add to cuda
+        transform_matrix.requires_grad_(True)
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // resolution_level)
+        ty = torch.linspace(0, self.H - 1, self.H // resolution_level)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        # we assume that the fx fy in all intrinsic mats are the same, so use the first intrinsics_all_inv to gen rays
+        p = torch.matmul(self.intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        # import pdb
+        # pdb.set_trace()
+        rays_v = torch.matmul(transform_matrix[None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = transform_matrix[None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)  # H W 3
+
+
     def gen_rays_at_pose_mat(self, transform_matrix, resolution_level=1):
         transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32))
         transform_matrix = transform_matrix.cuda()  # add to cuda
