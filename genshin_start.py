@@ -1,3 +1,4 @@
+
 import os
 import time
 import json
@@ -22,23 +23,26 @@ from models.common import *
 from argparse import ArgumentParser
 from exp_runner import Runner
 
-def load_data(images_setting_path, camera_params_path, frames_count): # assmue load from a json file
+def load_data(camera_params_path, images_path, masks_path, frames_count): # assmue load from a json file
+    print("---------------------Loading image data-------------------------------------")
     with open(camera_params_path, "r") as json_file:
         camera_params_list = json.load(json_file)   
-    with open(images_setting_path, "r") as json_file:
-        pictures_list = json.load(json_file)  
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
     for i in range(0, frames_count):
-        picture_name = str(i)
-        image = cv.imread(pictures_list["img_" + picture_name])
-        images.append(image)
-        mask = cv.imread(pictures_list["mask_" + picture_name])
+        picture_name = str(i) + ".png"
+        image_I_path = images_path + "/transform" + f"{i:04}" + picture_name 
+        image = cv.imread(image_I_path)
+        images.append(image) + ".png"
+        mask_I_path = masks_path + "/transform" + f"{i:04}_mask" + picture_name 
+        mask = cv.imread(mask_I_path)
         masks.append(mask)
         cameras_name = str(i)
         camera_K = camera_params_list[cameras_name + "_K"]
         cameras_K.append(camera_K)
         camera_M = camera_params_list[cameras_name + "_M"]
         cameras_M.append(camera_M)
+    print("---------------------Loading image data finished------------------------------")
+
     return images, masks, cameras_K, cameras_M  # returns numpy arrays
 
 def generate_rays_at(transform_matrix, intrinsic_mat, W, H, resolution_level):  # transform mat should be c2w mat
@@ -102,7 +106,7 @@ class GenshinStart(torch.nn.Module):
                   'transform': [0.0, 0.0, 0.9985088109970093, 0.0, 0.0, 0.0],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
-        self.dynamic_observation = rigid_body_simulator(static_mesh, option)
+        self.physical_simulator = rigid_body_simulator(static_mesh, option)
         self.max_frames = 1
         self.translation, self.quaternion = [], []
         self.static_object_conf_path =    motion_data["neus_object_conf_path"]
@@ -115,8 +119,8 @@ class GenshinStart(torch.nn.Module):
         # in this step, use 'train' mode as default
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue) 
-        self.runner_background = \
-            Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
+        # self.runner_background = \
+        #     Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
         
         with torch.no_grad():
             self.init_mu = torch.zeros([1], requires_grad=True, device=self.device)
@@ -129,11 +133,14 @@ class GenshinStart(torch.nn.Module):
         # TODO: need to be completed， should be torch tensor here
         self.batch_size = motion_data["batch_size"]
         self.frame_counts = motion_data["frame_counts"]
-        self.image_setting_path = motion_data["image_setting_path"]
-        self.camera_setting_path = motion_data["camera_setting_path"]
+        self.images_path = motion_data["images_path"]
+        self.masks_path = motion_data["masks_path"]
+        self.camera_setting_path = motion_data["cameras_setting_path"]
         
-        images, masks, cameras_K, cameras_M = load_data(self.image_setting_path, self.camera_setting_path, self.frame_counts)
+        images, masks, cameras_K, cameras_M = load_data(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts)
         rays_o_all, rays_v_all, rays_gt_all, rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M)
+        import pdb
+        pdb.set_trace()
 
         self.rays_o_all = torch.from_numpy(rays_o_all).to(self.device)
         self.rays_v_all = torch.from_numpy(rays_v_all).to(self.device)
@@ -145,10 +152,10 @@ class GenshinStart(torch.nn.Module):
         pbar = trange(max_f) 
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
-        self.dynamic_observation.clear()
-        self.dynamic_observation.clear_gradients()
+        self.physical_simulator.clear()
+        self.physical_simulator.clear_gradients()
         for i in pbar:                      
-            translation, quaternion = self.dynamic_observation.forward(i)
+            translation, quaternion = self.physical_simulator.forward(i)
             self.translation.append(translation)
             self.quaternion.append(quaternion)
             global_loss = torch.tensor(torch.nan, device=self.device)
@@ -186,11 +193,11 @@ class GenshinStart(torch.nn.Module):
                 translation_grad = self.translation[f].grad
                 quaternion_grad = self.quaternion[f].grad
             if f > 0:
-                self.dynamic_observation.set_motion_grad(f, translation_grad, quaternion_grad)
-                self.dynamic_observation.backward(f)
+                self.physical_simulator.set_motion_grad(f, translation_grad, quaternion_grad)
+                self.physical_simulator.backward(f)
             else:
                 v_grad, omega_grad, ke_grad, mu_grad, translation_grad, quaternion_grad = \
-                    self.dynamic_observation.backwards(f)
+                    self.physical_simulator.backwards(f)
                 self.init_v.backward(retain_graph=True, gradient=v_grad)
                 self.init_omega.backward(retain_graph=True, gradient=omega_grad)
                 self.init_ke.backward(retain_graph=True, gradient=ke_grad)
@@ -267,15 +274,14 @@ if __name__ == '__main__':
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--case', type=str, default='')
-
     args = parser.parse_args()
-    torch.cuda.set_device(args.gpu)
-
+    genshinStart = GenshinStart(args.conf)
     if args.mode == "train":
         train_static()
         train_velocity()
         train_dynamic()
-
-    train_dynamic()
+    else:
+        train_dynamic()
 
     
+# python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue 

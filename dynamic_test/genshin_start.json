@@ -1,0 +1,42 @@
+{
+    "static_background_path" : "",
+    "static_mesh_path": "./exp/bird/wmask/meshes/00295000.ply",
+    "camera_poses_mat" : [
+        [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+        ],
+        [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+        ],
+        [
+            0.0,
+            0.0,
+            1.0,
+            -5.0
+        ],
+        [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+        ]
+    ],
+    "neus_object_conf_path": "./confs/wmask.conf",
+    "neus_static_object_name": "bird",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "",
+    "neus_static_background_name": "",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 2,
+    "images_path": "./dynamic_test/image",
+    "masks_path": "./dynamic_test/mask",
+    "cameras_setting_path": "./dynamic_test/cameras_setting.json"
+
+}
