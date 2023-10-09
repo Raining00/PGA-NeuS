@@ -206,7 +206,7 @@ class rigid_body_simulator:
         self.inv_mass = 1.0 / self.mass[None]
 
         # rigid body parameters
-        self.gravity = ti.Vector([0.0, -9.8, 0.0])
+        self.gravity = ti.Vector([0.0, 0.0, -9.8])
         # params need to be optimized
         self.ke = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
         self.mu = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
@@ -439,9 +439,9 @@ class rigid_body_simulator:
     @ti.kernel
     def set_motion_grad(self, f:ti.i32, dLdt:ti.types.ndarray(), dLdq:ti.types.ndarray()):
         for i in ti.static(range(3)):
-            self.translation.grad[f][i] = dLdt[f, i]
-            self.quat.grad[f][i] = dLdq[f, i]
-        self.quat.grad[f][3] = dLdq[f, 3]
+            self.translation.grad[f][i] = dLdt[i]
+            self.quat.grad[f][i] = dLdq[i]
+        self.quat.grad[f][3] = dLdq[3]
         # print(f'frames:{f} translation grad:{self.translation.grad[f]}')
         # print(f'frames:{f} quat grad:{self.quat.grad[f]}')
 
@@ -453,37 +453,36 @@ class rigid_body_simulator:
         
     @ti.kernel
     def get_simulation_grad(self, translation_grad:ti.types.ndarray(), quat_grad:ti.types.ndarray()):
-        for f in range(self.frames):
-            for i in ti.static(range(3)):
-                translation_grad[f, i] = self.translation.grad[f][i]
-            for j in ti.static(range(4)):
-                quat_grad[f, j] = self.quat.grad[f][j]
+        for i in ti.static(range(3)):
+            translation_grad[i] = self.translation.grad[0][i]
+        for j in ti.static(range(4)):
+            quat_grad[j] = self.quat.grad[0][j]
 
     @ti.kernel
-    def get_transform(self, translation:ti.types.ndarray(), quat:ti.types.ndarray()):
+    def get_transform(self, f:ti.i32, translation:ti.types.ndarray(), quat:ti.types.ndarray()):
         for i in range(3):
-            translation[i] = self.translation[self.frames-1][i]
-            quat[i] = self.quat[self.frames-1][i]
-        quat[3] = self.quat[self.frames-1][3]
+            translation[i] = self.translation[f][i]
+            quat[i] = self.quat[f][i]
+        quat[3] = self.quat[f][3]
 
     def forward(self, frame):
         if frame > 0:
             self.set_v()
-            for i in range(self.substep * (frame-1), * self.substep * frame):
+            for i in range(self.substep * (frame-1), self.substep * frame):
                 self.pre_compute(i)
                 self.collision_detect(i)
                 self.update_state(i)
                 ti.sync()
-            # self.compute_loss()
+            # self.compute_loss()n
             translation = np.zeros([3],dtype=np.float32)
             quat = np.zeros([4], dtype=np.float32)
-            self.get_transform(translation=translation, quat=quat)
+            self.get_transform(f=i, translation=translation, quat=quat)
             return torch.from_numpy(translation).to(self.device), \
                 torch.from_numpy(quat).to(self.device)
         else:
             return None, None
 
-    def backwards(self, frame:int):
+    def backward(self, frame:int):
         if frame > 0:
             for i in reversed(range((frame - 1) * self.substep, frame * self.substep)):
                 self.update_state.grad(i)
@@ -491,8 +490,8 @@ class rigid_body_simulator:
                 self.pre_compute.grad(i)
             self.set_v.grad()
         else:
-            translation_grad = np.zeros([self.frames, 3],dtype=np.float32)
-            quat_grad = np.zeros([self.frames, 4], dtype=np.float32)
+            translation_grad = np.zeros([3],dtype=np.float32)
+            quat_grad = np.zeros([4], dtype=np.float32)
             # init_v_grad = np.zeros([3], dtype=np.float32)
             # init_omega_grad = np.zeros([3], dtype=np.float32)
             self.get_simulation_grad(translation_grad=translation_grad, quat_grad=quat_grad) 
@@ -509,6 +508,11 @@ class rigid_body_simulator:
                     torch.from_numpy(translation_grad).to(self.device), \
                     torch.from_numpy(quat_grad).to(self.device)
     
+    @ti.kernel
+    def set_init_v(self, v:ti.types.ndarray()):
+        for i in ti.static(range(3)):
+            self.init_v[None][i] = v[i]
+
     def train(self):
         loss = []
         for iters in range(self.train_iters):

@@ -391,11 +391,8 @@ class NeuSRenderer:
     def render_dynamic(self, rays_o, rays_d, near, far, R, T, perturb_overwrite=-1, background_rgb=None, cos_anneal_ratio=0.0):
         # apply R to rays_d and T to rays_o, requires grad here
         batch_size = len(rays_o)
-        # import pdb
-        # pdb.set_trace()
         T_neg = torch.neg(T)       
         T_expand = T_neg.repeat(batch_size, 1)  # expand the trans
-        rays_o = rays_o + T_expand  # batch_size 3
         w, x, y, z = R
         rotate_mat = torch.zeros((3, 3), device=rays_o.device)
         rotate_mat[0, 0] = 1 - 2 * (y ** 2 + z ** 2)
@@ -407,9 +404,19 @@ class NeuSRenderer:
         rotate_mat[2, 0] = 2 * (x * z - y * w)
         rotate_mat[2, 1] = 2 * (y * z + x * w)
         rotate_mat[2, 2] = 1 - 2 * (x ** 2 + y ** 2)
-        rotate_mat = torch.inverse(rotate_mat)   # make an inverse
+        transform_matrix = torch.zeros((4,4), device=rays_o.device)
+        transform_matrix[0:3, 0:3] = rotate_mat
+        transform_matrix[0:3, 3] = T
+        transform_matrix[3, 3] = 1.0
+        transform_matrix_inv = torch.inverse(transform_matrix)   # make an inverse
+        
         rays_d = torch.matmul(rotate_mat[None, :3, :3], rays_d[:, :, None]).squeeze()  # batch_size, 3
+        rays_o = torch.matmul(rotate_mat[None, :3, :3], rays_o[:, :, None]).squeeze()  # batch_size, 3
+        
+        rays_o = rays_o + T_expand  # batch_size 3
         render_out = self.render(rays_o, rays_d, near, far, perturb_overwrite, background_rgb, cos_anneal_ratio)
+        # import pdb
+        # pdb.set_trace()
         # color_fine = render_out['color_fine']
         # color_error = (color_fine - rays_gt) * rays_mask 
         # mask_sum = rays_mask.sum() + 1e-6

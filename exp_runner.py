@@ -384,7 +384,6 @@ class Runner:
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-
             background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
 
             render_out = self.renderer.render(rays_o_batch,
@@ -393,13 +392,9 @@ class Runner:
                                               far,
                                               cos_anneal_ratio=self.get_cos_anneal_ratio(),
                                               background_rgb=background_rgb)
-
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
 
             del render_out
-        image = cv.imread('dynamic_test/transform0001.png') / 256.0
-        image = torch.from_numpy(image.astype(np.float32)).to(self.device)
-
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine
 
@@ -470,10 +465,17 @@ class Runner:
         original_mat = motion_data["1_1_M"]
         if original_mat == None:
             print_error("static camera information must be provided")
-        for i in tqdm(range(frames)):
+        for i in tqdm(range(1)):
             motion_transform = motion_transforms[i]
             assert i == motion_transform["frame_id"], "invalid frame sequence"
             t, q = motion_transform['translation'], motion_transform['rotation'],
+            q = [0.9515, 0.1449, 0.2685, 0.0381]
+            t = [0000, 0.0000, 0.8668]
+
+            q = [0.9515, 0.1449, 0.2685, 0.0381]
+            t = [0.0000, 0.0000, 0.8671]
+
+
             w, x, y, z = q
             rotate_mat = np.array([
                 [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -491,7 +493,7 @@ class Runner:
             set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
             file_name_with_extension = os.path.basename(setting_json_path)
             case_name, file_extension = os.path.splitext(file_name_with_extension)
-            render_path = f"{set_dir}/{case_name}{i:04d}.png"
+            render_path = f"{set_dir}/test_render_motion{i:04d}.png"
             print("Saving render img at " + render_path)
             cv.imwrite(render_path, img)
             print_info(f"finish rendering frame:{i}")
@@ -505,7 +507,7 @@ class Runner:
 
         optimizer = torch.optim.Adam(
         [ 
-            {'params':pnerf.nerf.density.parameters(), 'lr': 1e-1}
+            #  {'params':pnerf.nerf.density.parameters(), 'lr': 1e-1}
         ],
         amsgrad=False
         )
@@ -578,20 +580,11 @@ class Runner:
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
                                         reduction='sum') / mask_sum  # normalize
             color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
-            R_grad = quat.grad
-            T_grad = translation.grad
-            R_grad = R_grad.to("cpu")
-            T_grad = T_grad.to("cpu")
             # print_info(f'translation_grad:{T_grad}, rotation_grad: {R_grad}')
-            # out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
+            out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
             del render_out
 
         print(translation.grad.shape)
-        T_grad = T_grad[None, :]
-        R_grad = R_grad[None, :]
-        dynamic_observation.clear_gradients()
-        dynamic_observation.set_motion_grad(T_grad, R_grad)
-        print_info(dynamic_observation.backwards())
 
         # img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
         #     [image_rgb.shape[0], image_rgb.shape[1], 3]) * 256).clip(0, 255).astype(np.uint8)
@@ -607,7 +600,7 @@ if __name__ == '__main__':
     print('Genshin Nerf, start!!!')
 
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    torch.cuda.set_device(args.gpu)
+    # torch.cuda.set_device(args.gpu)
 
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
@@ -648,6 +641,7 @@ cd D:/gitwork/NeuS
 D:
 python exp_runner.py --mode render_at --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/test_render.json
 python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
+python exp_runner.py --mode render_motion --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/transform.json
 
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
 python exp_runner.py --mode train --conf ./confs/womask.conf --case bird_ss --is_continue
