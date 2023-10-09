@@ -199,6 +199,8 @@ class Dataset:
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
         rays_v = torch.matmul(transform_matrix[None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
         rays_o = transform_matrix[None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        import pdb
+        pdb.set_trace()
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)  # H W 3
 
     def gen_rays_at_pose(self, rotation, transition, resolution_level=1):

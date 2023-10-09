@@ -380,7 +380,8 @@ class Runner:
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
-
+        import pdb
+        pdb.set_trace()
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
@@ -470,7 +471,7 @@ class Runner:
             assert i == motion_transform["frame_id"], "invalid frame sequence"
             t, q = motion_transform['translation'], motion_transform['rotation'],
             q = [0.9515, 0.1449, 0.2685, 0.0381]
-            t = [0000, 0.0000, 0.8668]
+            t = [0000, 0.0000, 0.8659]
 
             q = [0.9515, 0.1449, 0.2685, 0.0381]
             t = [0.0000, 0.0000, 0.8671]
@@ -486,8 +487,9 @@ class Runner:
             transform_matrix[0:3, 0:3] = rotate_mat
             transform_matrix[0:3, 3] = t
             transform_matrix[3, 3] = 1.0
-            transform_matrix = inverse_matrix = np.linalg.inv(transform_matrix)
-            camera_pose = transform_matrix @ original_mat
+            inverse_matrix = np.linalg.inv(transform_matrix)
+            camera_pose = np.array(original_mat)
+            
             img = self.render_novel_image_at(camera_pose, 2)
             # img loss
             set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)

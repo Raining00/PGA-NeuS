@@ -90,6 +90,8 @@ def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, resolution_level=1 ,o
         rays_v_all.append(rays_v)
         rays_gt_all.append(rays_gt)
         rays_mask_all.append(rays_mask)
+
+
     # returns rays_o_all, rays_v_all, rays_gt_all, rays_mask_all formulate by frames
     return rays_o_all, rays_v_all, rays_gt_all, rays_mask_all
 
@@ -137,6 +139,8 @@ class GenshinStart(torch.nn.Module):
             self.init_quaternion = torch.zeros([4], requires_grad=True, device=self.device)
             self.init_v = torch.zeros([3], requires_grad=True, device=self.device)
             self.init_omega = torch.zeros([3], requires_grad=True, device=self.device)
+            
+
         # TODO: need to be completed， should be torch tensor here
         self.batch_size = motion_data["batch_size"]
         self.frame_counts = motion_data["frame_counts"]
@@ -153,6 +157,7 @@ class GenshinStart(torch.nn.Module):
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, resolution_level=2, original_shape=(self.global_W, self.global_H))
 
+
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
         transform_matrix = torch.tensor([
@@ -162,7 +167,6 @@ class GenshinStart(torch.nn.Module):
             [0, 0, 0, 1.0]
         ], device=self.device, requires_grad=True, dtype=torch.float32)
         transform_matrix_inv = torch.inverse(transform_matrix)   # make an inverse
-        transform_matrix_inv.requires_grad_(True)
         return transform_matrix, transform_matrix_inv
 
     def forward(self, max_f:int):       
@@ -174,39 +178,42 @@ class GenshinStart(torch.nn.Module):
         with torch.no_grad():
             self.physical_simulator.set_init_v(v=self.init_v)
         print_info(f'init v: {self.init_v}')
-        for i in pbar:
+        for i in pbar:       
             print_blink(f'frame id : {i}')               
-
-            orgin_mat_c2w = torch.from_numpy(self.cameras_M[i].astype(np.float32)).to(self.device)
-            # orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
-            # translation = torch.nn.Parameter(torch.Tensor([0, 0, 0]), requires_grad=True).to(self.device)
-            # quaternion = torch.nn.Parameter(torch.Tensor([1, 0, 0, 0]), requires_grad=True).to(self.device)
             translation, quaternion = self.physical_simulator.forward(i)
+            print (str(translation) + "\n" + str(quaternion))
+            # import pdb
+            # pdb.set_trace()
             translation.requires_grad_(True)
             quaternion.requires_grad_(True)
+            print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}'
+                       )
+            camera_pos = torch.zeros((4,4), device=self.device, requires_grad=True)
             self.translation.append(translation)
             self.quaternion.append(quaternion)
-            print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}')
-            # import pdb; pdb.set_trace()
-            # camera_pos = torch.zeros((4,4), device=self.device, requires_grad=True)
-            # transform_matrix, transform_matrix_inv = self.get_transform_matrix(translation=translation, quaternion=quaternion)
-            # camera_pos = torch.matmul(transform_matrix_inv, orgin_mat_c2w)
-            rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], self.rays_v_all[i]
-            # gW, gH = self.global_W, self.global_H
-            # tx = torch.linspace(0, gW - 1, self.W)
-            # ty = torch.linspace(0, gH - 1, self.H)
-            # pixels_x, pixels_y = torch.meshgrid(tx, ty)
-            # p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
-            # # we assume that the fx fy in all intrinsic mats are the same, so use the first intrinsics_all_inv to gen rays
-            # p = torch.matmul(orgin_mat_K_inv[None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
-            # rays_d = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
-            # rays_d = torch.matmul(camera_pos[None, None, :3, :3], rays_d[:, :, :, None]).squeeze()  # W, H, 3
-            # rays_o = camera_pos[None, None, :3, 3].expand(rays_d.shape)  # W, H, 3
-            # rays_o = rays_o.transpose(0, 1)
-            # rays_d = rays_d.transpose(0, 1)  # H W 3
-            # rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
+            transform_matrix, transform_matrix_inv = self.get_transform_matrix(translation=translation, quaternion=quaternion)
+            orgin_mat_c2w = torch.from_numpy(self.cameras_M[i].astype(np.float32)).to(self.device)
+            orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
+            orgin_mat_c2w.requires_grad_(True)
+            orgin_mat_K_inv.requires_grad_(True)
+            camera_pos = torch.matmul(transform_matrix_inv, orgin_mat_c2w)
+            rays_gt, rays_mask = self.rays_gt_all[i], self.rays_mask_all[i]
+            gW, gH = self.global_W, self.global_H
+            tx = torch.linspace(0, gW - 1, self.W)
+            ty = torch.linspace(0, gH - 1, self.H)
+            pixels_x, pixels_y = torch.meshgrid(tx, ty)
+            p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+            # we assume that the fx fy in all intrinsic mats are the same, so use the first intrinsics_all_inv to gen rays
+            p = torch.matmul(orgin_mat_K_inv[None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+            rays_d = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+            rays_d = torch.matmul(camera_pos[None, None, :3, :3], rays_d[:, :, :, None]).squeeze()  # W, H, 3
+            rays_o = camera_pos[None, None, :3, 3].expand(rays_d.shape)  # W, H, 3
+            rays_o = rays_o.transpose(0, 1)
+            rays_d = rays_d.transpose(0, 1)  # H W 3
+            rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
+
             # generate rays_o rays_d trmperarly here
-            # rays_mask = torch.ones_like(rays_mask)  # full img render
+            rays_mask = torch.ones_like(rays_mask)  # full img render
             rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
             rays_sum = len(rays_o)
             debug_rgb = []
@@ -214,26 +221,28 @@ class GenshinStart(torch.nn.Module):
                 near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
                 background_rgb = None
                 # this render out contains grad & img loss, find out its reaction with phy simualtion
-                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near, far=far, 
-                                                                        R=quaternion, T=translation, camera_c2w=orgin_mat_c2w,
-                                                                        cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),background_rgb=background_rgb)
+                render_out = self.runner_object.renderer.render(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near, far=far,
+                                                        cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                        background_rgb=background_rgb)
                 color_fine = render_out["color_fine"]
                 color_error = (color_fine - rays_gt_batch)
                 # print("render at o & d " + str(rays_o_batch) + "\n" + str(rays_d_batch[0]) + "\n" + str(rays_d_batch[1])) 
-
+                # inv_tmp = self.runner_object.dataset.intrinsics_all_inv
+                import pdb
+                pdb.set_trace()
                 debug_rgb.append(color_fine.clone().detach().cpu().numpy())
                 color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
                                             reduction='sum') / rays_sum / max_f  # normalize
                 global_loss += color_fine_loss.clone().detach()
-                color_fine_loss.backward()  # img_loss for refine R & T
-                # import pdb; pdb.set_trace()
-
+                color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
                 torch.cuda.synchronize()
                 del render_out
-            ### img_debug should has same shape as rays_gt
+            # img_debug should has same shape as rays_gt
             debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8) 
+            # debug_rgb = (rays_gt.detach().cpu().numpy() * 256).clip(0, 255).astype(np.uint8) 
             W, H, cnt = self.W, self.H, 0
             rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
+            
             debug_img = np.zeros_like(rays_mask).astype(np.float32)
             for index in range(0, H):
                 for j in range(0, W):  
@@ -242,13 +251,14 @@ class GenshinStart(torch.nn.Module):
                         debug_img[index][j][1] = debug_rgb[cnt][1]
                         debug_img[index][j][2] = debug_rgb[cnt][2]
                         cnt = cnt + 1
-            # debug_img2 = np.ones((W*H, 3)).astype(np.uint8) 
-            # debug_img2[:rays_sum, : ] = debug_rgb    
-            # debug_img2 = debug_img2.reshape(H, W, 3)      
+            debug_img2 = np.ones((W*H, 3)).astype(np.uint8) 
+            debug_img2[:rays_sum, : ] = debug_rgb    
+            debug_img2 = debug_img2.reshape(H, W, 3)      
+            # debug_img = np.where(rays_mask, debug_rgb, np.zeros((1, 3)))
             print_blink("saving debug image at " + str(i) + " index")
             cv.imwrite("./debug" + str(i) + ".png", debug_img)
-            # print_blink("saving debug image2 at " + str(i) + " index")
-            # cv.imwrite("./debug" + str(i) + "_.png", debug_img2)
+            print_blink("saving debug image2 at " + str(i) + " index")
+            cv.imwrite("./debug" + str(i) + "_.png", debug_img2)
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
         return global_loss
 
@@ -329,9 +339,9 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
         if loss.norm() < 1e-6:
             break
         genshinStart.backward(max_f)
-        optimizer.step()
         import pdb
         pdb.set_trace()
+        optimizer.step()
 
 
 if __name__ == '__main__':
@@ -360,5 +370,4 @@ if __name__ == '__main__':
         train_dynamic(5, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
 
     
-# python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue 
-# D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue
+# python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue 
