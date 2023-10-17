@@ -444,7 +444,6 @@ class Runner:
         writer.release()
 
     def save_render_pic_at(self, setting_json_path):
-
         camera_pose = calc_new_pose(args.render_at_pose_path)
         img = self.render_novel_image_at(camera_pose, 2)
         set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
@@ -458,8 +457,9 @@ class Runner:
     def render_motion(self, setting_json_path):
         with open(setting_json_path, "r") as json_file:
             motion_data = json.load(json_file)
-        if motion_data["frames"] == None:
-            print_error("must provite a sequence of motion information")
+        if motion_data["frames"] is None:
+            print_error("must provide a sequence of motion information")
+            exit()
         frames = motion_data["frames"]
         print_info(f"{frames} frames will be rendered.")
         motion_transforms = motion_data["results"]
@@ -476,7 +476,6 @@ class Runner:
             q = [0.9515, 0.1449, 0.2685, 0.0381]
             t = [0.0000, 0.0000, 0.8671]
 
-
             w, x, y, z = q
             rotate_mat = np.array([
                 [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -489,7 +488,7 @@ class Runner:
             transform_matrix[3, 3] = 1.0
             inverse_matrix = np.linalg.inv(transform_matrix)
             camera_pose = np.array(original_mat)
-            
+
             img = self.render_novel_image_at(camera_pose, 2)
             # img loss
             set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
@@ -508,10 +507,10 @@ class Runner:
         static_mesh = motion_data["static_mesh_path"]
 
         optimizer = torch.optim.Adam(
-        [ 
-            #  {'params':pnerf.nerf.density.parameters(), 'lr': 1e-1}
-        ],
-        amsgrad=False
+            [
+                #  {'params':pnerf.nerf.density.parameters(), 'lr': 1e-1}
+            ],
+            amsgrad=False
         )
 
         # in the future, it need to be replaced as a set of camera poses from real-world data
@@ -530,15 +529,15 @@ class Runner:
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
         dynamic_observation = rigid_body_simulator(static_mesh, option)
-        dynamic_observation.set_init_quat(np.array([0.9515485167503357,0.14487811923027039,0.2685358226299286,0.03813457489013672]))
+        dynamic_observation.set_init_quat(
+            np.array([0.9515485167503357, 0.14487811923027039, 0.2685358226299286, 0.03813457489013672]))
         dynamic_observation.set_init_translation(np.array([0.0, 0.0, 0.9985088109970093]))
         dynamic_observation.clear()
         translation, quat = dynamic_observation.forward()
-        
+
         ## TODO: the following code needs to be batchfied as :
         # for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
         #     break
-
         # load the ground truth img
         # use cv2.IMREAD_COLOR to read image
         image = cv.imread('./dynamic_test/transform0001.png')
@@ -557,7 +556,8 @@ class Runner:
         else:
             rays_mask = torch.from_numpy(np.where(image_mask > 0, 1, 0)).to(self.device).bool()
         self.dataset.set_image_w_h(image_rgb.shape[1], image_rgb.shape[0])  # change W & H here, index 1 is W, 0 is H
-        rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(original_mat, resolution_level=resolution_level)  # the shape here is H, W, 3
+        rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(original_mat,
+                                                           resolution_level=resolution_level)  # the shape here is H, W, 3
         # import pdb
         # pdb.set_trace()
         rays_o = rays_o[rays_mask].reshape(-1, 3).split(self.batch_size)
@@ -593,9 +593,9 @@ class Runner:
         # cv.imwrite('dynamic_train.png', img_fine)
         print_ok('dynamic train has done!')
         return
-    
+
     def get_runner(neus_conf_path, case_name, is_continue):
-        return Runner(neus_conf_path, mode = "train", case=case_name, is_continue=is_continue)
+        return Runner(neus_conf_path, mode="train", case=case_name, is_continue=is_continue)
 
 
 if __name__ == '__main__':
@@ -642,6 +642,8 @@ conda activate neus
 cd D:/gitwork/NeuS
 D:
 python exp_runner.py --mode render_at --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/test_render.json
+
+
 python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode render_motion --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/transform.json
 

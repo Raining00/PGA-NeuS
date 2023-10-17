@@ -155,6 +155,10 @@ class GenshinStart(torch.nn.Module):
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
+        w, x, y, z = quaternion
+        w, x, y, z = quaternion
+
+
         transform_matrix = torch.tensor([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w), translation[0]],
             [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w), translation[1]],
@@ -206,7 +210,7 @@ class GenshinStart(torch.nn.Module):
             # rays_d = rays_d.transpose(0, 1)  # H W 3
             # rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
             # generate rays_o rays_d trmperarly here
-            # rays_mask = torch.ones_like(rays_mask)  # full img render
+            rays_mask = torch.ones_like(rays_mask)  # full img render
             rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
             rays_sum = len(rays_o)
             debug_rgb = []
