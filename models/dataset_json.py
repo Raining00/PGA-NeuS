@@ -95,6 +95,10 @@ class Dataset:
 
         print('Load data: End')
 
+    def set_image_w_h(self, w, h):
+        self.W = w
+        self.H = h
+
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.
@@ -113,6 +117,7 @@ class Dataset:
     def gen_rays_at_pose_mat(self, transform_matrix, resolution_level=1):
         transform_matrix = torch.from_numpy(transform_matrix)
         transform_matrix.cuda()   # add to cuda
+        transform_matrix.requires_grad_(True)
         l = resolution_level
         tx = torch.linspace(0, self.W - 1, self.W // l)
         ty = torch.linspace(0, self.H - 1, self.H // l)
