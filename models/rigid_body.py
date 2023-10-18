@@ -142,6 +142,10 @@ class rigid_body_simulator:
         if options['frames'] is not None:
             self.frames = options['frames']
         
+        if options['frame_dt'] is not None:
+            self.frame_dt = options['frame_dt']
+            self.dt = self.frame_dt / self.substep
+        
         if options['transform'] is not None:
             self.initial_translation = ti.Vector(options['transform'][0:3], dt=ti.f32)
             self.initial_quat = ti.Vector(form_euler(options['transform'][3:6]), dt=ti.f32)
@@ -230,15 +234,15 @@ class rigid_body_simulator:
 
         # set up ggui
         #create a window
-        self.window = ti.ui.Window(name='Rigid body dynamics', res=(1280, 720), fps_limit=60, pos=(150,150))
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.Camera()
-        self.camera.position(1,2,3)
-        self.camera.lookat(0,0,0)
-        self.camera.up(0,1,0)
-        self.camera.projection_mode(ti.ui.ProjectionMode.Perspective)
-        self.scene.set_camera(self.camera)
+        # self.window = ti.ui.Window(name='Rigid body dynamics', res=(1280, 720), fps_limit=60, pos=(150,150))
+        # self.canvas = self.window.get_canvas()
+        # self.scene = ti.ui.Scene()
+        # self.camera = ti.ui.Camera()
+        # self.camera.position(1,2,3)
+        # self.camera.lookat(0,0,0)
+        # self.camera.up(0,1,0)
+        # self.camera.projection_mode(ti.ui.ProjectionMode.Perspective)
+        # self.scene.set_camera(self.camera)
         # simulation flag
         self.pause = True
         self.device = 'cuda:0'
@@ -516,6 +520,11 @@ class rigid_body_simulator:
     def set_init_v(self, v:ti.types.ndarray()):
         for i in ti.static(range(3)):
             self.init_v[None][i] = v[i]
+
+    @ti.kernel
+    def set_collision_coeff(self, ke:ti.types.ndarray(), mu:ti.types.ndarray()):
+        self.ke[None] = ke[0]
+        self.mu[None] = mu[0]
 
     def train(self):
         loss = []

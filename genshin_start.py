@@ -23,39 +23,47 @@ from models.common import *
 from argparse import ArgumentParser
 from exp_runner import Runner
 
-def load_data(images_path, masks_path, camera_params_path, frames_count): # assmue load from a json file
+def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False, pic_mode="png"): # assmue load from a json file
     print("---------------------Loading image data-------------------------------------")
+
     with open(camera_params_path, "r") as json_file:
         camera_params_list = json.load(json_file)   
+    global_K, global_M = None, None
+
+    if with_fixed_camera:  # in this case, we assume all frames share with the same K & M
+        global_K = camera_params_list['K']
+        global_M = camera_params_list['M']
+        
+        
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
-    for i in range(0, frames_count):
+    for i in range(1, frames_count+1):
         picture_name = f"{i:04}"
-        image_I_path = images_path + "/transform" + picture_name + ".png"
+        image_I_path = images_path + "/" + picture_name + "." + pic_mode
         image = cv.imread(image_I_path)
         images.append(np.array(image)) 
-        mask_I_path = masks_path + "/mask_transform" + picture_name + ".png"
+        mask_I_path = masks_path + "/mask_" + picture_name + "." + pic_mode
         mask = cv.imread(mask_I_path)
         masks.append(np.array(mask))
-        cameras_name = str(i)
-        camera_K = camera_params_list[cameras_name + "_K"]
-        cameras_K.append(np.array(camera_K))
-        camera_M = camera_params_list[cameras_name + "_M"]
-        cameras_M.append(np.array(camera_M))
+        if with_fixed_camera:
+            cameras_K.append(np.array(global_K))
+            cameras_M.append(np.array(global_M))
+        else:
+            cameras_name = str(i)
+            camera_K = camera_params_list[cameras_name + "_K"]
+            cameras_K.append(np.array(camera_K))
+            camera_M = camera_params_list[cameras_name + "_M"]
+            cameras_M.append(np.array(camera_M))
     
 
     print("---------------------Load image data finished-------------------------------")
     return images, masks, cameras_K, cameras_M  # returns numpy arrays
 
-def generate_rays_at(transform_matrix, intrinsic_mat, W, H, resolution_level=1, original_shape=None):  # transform mat should be c2w mat
-    if original_shape is None:
-        original_shape = (W, H)
+def generate_rays_with_K_and_M(transform_matrix, intrinsic_mat, W, H, resolution_level=1):  # transform mat should be c2w mat
     transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to('cuda:0')# add to cuda
     intrinsic_mat_inv = np.linalg.inv(intrinsic_mat)
     intrinsic_mat_inv = torch.from_numpy(intrinsic_mat_inv.astype(np.float32)).to('cuda:0')
-
-    l = resolution_level
-    tx = torch.linspace(0, original_shape[0] - 1, original_shape[0] // l)
-    ty = torch.linspace(0, original_shape[1] - 1, original_shape[1] // l)
+    tx = torch.linspace(0, W - 1, W // resolution_level)
+    ty = torch.linspace(0, H - 1, H // resolution_level)
     pixels_x, pixels_y = torch.meshgrid(tx, ty)
     p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
     p = torch.matmul(intrinsic_mat_inv[None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
@@ -64,26 +72,21 @@ def generate_rays_at(transform_matrix, intrinsic_mat, W, H, resolution_level=1, 
     rays_o = transform_matrix[None, None, :3, 3].expand(rays_v.shape)  # W, H, 3, start from transform
     return rays_o.transpose(0, 1), rays_v.transpose(0, 1)  # H W 3
 
-def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, resolution_level=1 ,original_shape=None):
+def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
     # this function generate rays from given img and camera_K & c2w, also returns rays_gt as reference
     # assume input raw images are 255-uint, this function transformed to 1.0-up float0
-    # stack the result into [frames_count, W*H, 3] format, assume all frames has the same resolution
-    if original_shape is None:
-        original_shape = imgs[0].shape
-    shape = imgs[0].shape
-    W, H = shape[1], shape[0]
+    # stack the result into [frames_count, W*H, 3] format, assume all frames has the same resolution with W, H
     frames_count = len(imgs)
     rays_o_all, rays_v_all, rays_gt_all, rays_mask_all = [], [], [], []
     for i in range(0, frames_count):
         rays_gt, rays_mask = imgs[i], masks[i] ## check if is  H, W, 3
-
         rays_gt = rays_gt / 256.0
         rays_gt = rays_gt.reshape(-1, 3)
         rays_gt = torch.from_numpy(rays_gt.astype(np.float32)).to("cuda:0")
         rays_mask = rays_mask / 255.0 
         rays_mask = np.where(rays_mask > 0, 1, 0).reshape(-1, 3)
         rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda:0")        
-        rays_o, rays_v = generate_rays_at(cameras_c2w[i], cameras_K[i], W, H, resolution_level=resolution_level, original_shape=original_shape) ## check if is  H, W, 3
+        rays_o, rays_v = generate_rays_with_K_and_M(cameras_c2w[i], cameras_K[i], W_all, H_all) ## check if is  H, W, 3
         rays_o = rays_o.reshape(-1, 3)
         rays_v = rays_v.reshape(-1, 3)
         rays_o_all.append(rays_o)
@@ -101,20 +104,16 @@ class GenshinStart(torch.nn.Module):
         with open(setting_json_path, "r") as json_file:
             motion_data = json.load(json_file)
         static_mesh = motion_data["static_mesh_path"]
-        option = {'frames': 5,
+        option = {'frames': motion_data["frame_counts"],
+                  'frame_dt': motion_data["frame_dt"], 
                   'ke': 0.1,
                   'mu': 0.8,
-                  'transform': [0.0, 0.0, 0.9985088109970093, 0.0, 0.0, 0.0],
+                  'transform': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
         self.physical_simulator = rigid_body_simulator(static_mesh, option)
-        self.physical_simulator.set_init_quat(np.array([0.9515485167503357,
-                                                        0.14487811923027039,
-                                                        0.2685358226299286,
-                                                        0.03813457489013672], dtype=np.float32))
-        self.physical_simulator.set_init_translation(np.array( [0.0,
-                                                                0.0,
-                                                                0.8670883774757385], dtype=np.float32))
+        self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
+        self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
         self.max_frames = 1
         self.translation, self.quaternion= [], []
         self.static_object_conf_path =    motion_data["neus_object_conf_path"]
@@ -143,21 +142,20 @@ class GenshinStart(torch.nn.Module):
         self.images_path = motion_data["images_path"]
         self.masks_path = motion_data["masks_path"]
         self.camera_setting_path = motion_data["cameras_setting_path"]
+        self.with_fixed_camera = motion_data["with_fixed_camera"]
+        images, masks, cameras_K, cameras_M = load_cameras_and_images(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts, with_fixed_camera=self.with_fixed_camera)
         
-        images, masks, cameras_K, cameras_M = load_data(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts)
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
-        self.global_W, self.global_H = 1600, 1200
-        images, masks, cameras_K, cameras_M = images[9:18], masks[9:18], cameras_K[9:18], cameras_M[9:18] # temp debug
-        self.frame_counts = 5
+        # images, masks, cameras_K, cameras_M = images[9:18], masks[9:18], cameras_K[9:18], cameras_M[9:18]  # TO DO: temp debug
+        # self.frame_counts = 5
         with torch.no_grad():
-            self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, resolution_level=2, original_shape=(self.global_W, self.global_H))
+            self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, self.W, self.H)
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
         w, x, y, z = quaternion
         w, x, y, z = quaternion
-
 
         transform_matrix = torch.tensor([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w), translation[0]],
@@ -177,6 +175,7 @@ class GenshinStart(torch.nn.Module):
         self.physical_simulator.clear_gradients()
         with torch.no_grad():
             self.physical_simulator.set_init_v(v=self.init_v)
+            self.physical_simulator.set_collision_coeff(mu=self.init_mu, ke=self.init_ke)
         print_info(f'init v: {self.init_v}')
         for i in pbar:
             print_blink(f'frame id : {i}')               
@@ -298,9 +297,9 @@ def get_optimizer(mode, genshinStart):
             [
                 # {"params": getattr(genshinStart,'init_translation'), 'lr': 1e-1},
                 # {'params': getattr(genshinStart,'init_quaternion'), 'lr':1e-1},
-                # {'params':getattr(genshinStart, 'init_mu'), 'lr': 1e-1},
-                # {'params':getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
-                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
+                {'params':getattr(genshinStart, 'init_mu'), 'lr': 1e-2},
+                {'params':getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
+                # {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
             ]
             ,
             amsgrad=False
