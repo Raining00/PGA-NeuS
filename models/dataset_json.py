@@ -26,7 +26,6 @@ def load_K_Rt_from_P(camera_matrix_map, camera_name):
     return pose, intrinsics
 
 
-
 class Dataset:
     def __init__(self, conf):
         super(Dataset, self).__init__()
@@ -88,13 +87,72 @@ class Dataset:
         self.image_pixels = self.H * self.W
 
         # Object scale mat: region of interest to **extract mes-h**
-        object_bbox_min = np.array([0.0, 0.0, -0.1])
-        object_bbox_max = np.array([0.8, 0.8, 0.4])
+        object_bbox_min = np.array([-.0, -0.2, -0.005])
+        object_bbox_max = np.array([0.2, 0.0, 0.13])
         self.object_bbox_min = object_bbox_min
         self.object_bbox_max = object_bbox_max
+        if conf.get_bool('with_sphere'):  # TODO: need to reset here
+            self.sphere_center = torch.from_numpy(np.array([0.08, -0.06, 0.04]).astype(np.float32)).cuda()
+            self.radius = 0.2
+        else:
+            self.sphere_center = torch.zeros(3)
+            self.radius = 1
 
         print('Load data: End')
 
+        self.focus_rays_in_mask = conf.get_bool('focus_rays_in_mask')  # this requires whether gen all rays in mask
+        self.rays_o_in_masks, self.rays_v_in_masks, self.rays_color_in_masks = None, None, None
+
+        def set_image_w_h(self, w, h):
+            self.W = w
+            self.H = h
+        def gen_all_rays_in_mask(max_rays_in_gpu=2000000):
+            # TODO: gen all rays_o and rays_v in mask for faster training
+            print("----------------generating all rays within mask-----------------")
+            rays_o_in_masks, rays_v_in_masks, rays_color_in_masks = [], [], []
+            for index in range(0, self.frame_count):
+                rays_mask = (self.masks[index]).detach().cpu().numpy()
+                rays_mask = np.where(rays_mask > 0.1, 1, 0).astype(np.bool_)
+                rays_color = (self.images[index]).detach().cpu().numpy()
+                W, H = self.W, self.H
+                tx = np.linspace(0, W - 1, W)
+                ty = np.linspace(0, H - 1, H)
+                pixels_x, pixels_y = np.meshgrid(tx, ty, indexing='ij')
+                p = np.stack([pixels_x, pixels_y, np.ones_like(pixels_y)], axis=-1)  # W, H, 3
+                intrinsics_inv = self.intrinsics_all_inv[index].detach().cpu().numpy()
+                p = np.matmul(intrinsics_inv[None, None, :3, :3],
+                              p[:, :, :, None]).squeeze()  # W, H, 3
+                rays_v = p / np.linalg.norm(p, ord=2, axis=-1, keepdims=True)  # W, H, 3
+                camera_pose = self.pose_all[index].detach().cpu().numpy()
+                rays_v = np.matmul(camera_pose[None, None, :3, :3],
+                                   rays_v[:, :, :, None]).squeeze()  # W, H, 3
+                rays_o = np.tile(camera_pose[:3, 3], (W, H, 1))  # W, H, 3
+
+                rays_o, rays_v = np.transpose(rays_o, (1, 0, 2)), np.transpose(rays_v, (1, 0, 2))  # H, W, 3
+
+                rays_o, rays_v, rays_color = rays_o[rays_mask].reshape(-1, 3), rays_v[rays_mask].reshape(-1, 3), \
+                    rays_color[rays_mask].reshape(-1, 3)  # H*W{mask), 3
+                print("hold " + str(rays_o.shape[0]) + "rays for image " + str(index + 1))
+                if len(rays_o) > max_rays_in_gpu:
+                    # hold as a random sequence in max batch size
+                    hold_sequence = np.random.choice(range(len(rays_o)), max_rays_in_gpu)  # pick outer_count in mask
+                    rays_o, rays_v, rays_color = rays_o[hold_sequence], rays_v[hold_sequence], rays_color[hold_sequence]
+                    # min(H*W{mask),max_rays_in_gpu) , 3
+
+                # need to cut down rays here if its so big
+
+                rays_o_in_masks.append(rays_o)
+                rays_v_in_masks.append(rays_v)
+                rays_color_in_masks.append(rays_color)
+            # import pdb
+            # pdb.set_trace()
+            print("------------------generate finished--------------------")
+            return rays_o_in_masks, rays_v_in_masks, rays_color_in_masks
+
+        if self.focus_rays_in_mask:
+            self.rays_o_in_masks, self.rays_v_in_masks, self.rays_color_in_masks = gen_all_rays_in_mask()
+
+        print('Load data: End')
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.
@@ -110,16 +168,18 @@ class Dataset:
         rays_o = self.pose_all[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
-    def gen_rays_at_pose_mat(self, transform_matrix, resolution_level=1):
-        transform_matrix = torch.from_numpy(transform_matrix)
-        transform_matrix.cuda()   # add to cuda
+    def gen_rays_at_pose_mat(self, transform_matrix, resolution_level=1, intrinsic_inv=None):
+        transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to(self.device)
+        if intrinsic_inv is None:
+            intrinsic_inv = self.intrinsics_all_inv[0]
+        # transform_matrix.cuda()  # add to cuda
         l = resolution_level
         tx = torch.linspace(0, self.W - 1, self.W // l)
         ty = torch.linspace(0, self.H - 1, self.H // l)
         pixels_x, pixels_y = torch.meshgrid(tx, ty)
         p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
         # we assume that the fx fy in all intrinsic mats are the same, so use the first intrinsics_all_inv to gen rays
-        p = torch.matmul(self.intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        p = torch.matmul(intrinsic_inv[None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
         rays_v = torch.matmul(transform_matrix[None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
         rays_o = transform_matrix[None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
@@ -193,6 +253,33 @@ class Dataset:
         return torch.cat([rays_o.to(self.device), rays_v.to(self.device), color, mask[:, :1]],
                          dim=-1).cuda()  # batch_size, 10
 
+    def select_random_rays_in_masks(self, img_idx, batch_size):
+        outer_count = int(batch_size * 0.1)
+        inner_count = int(batch_size - outer_count)
+        rays_o_in_mask_i = self.rays_o_in_masks[img_idx]
+        rays_v_in_mask_i = self.rays_v_in_masks[img_idx]
+        rays_color_in_mask_i = self.rays_color_in_masks[img_idx]
+        fg_count = rays_o_in_mask_i.shape[0]
+        fg_index = np.random.choice(range(fg_count), inner_count)  # pick outer_count in mask
+        rays_o_in_pick, rays_v_in_pick, true_color_in_pick = rays_o_in_mask_i[fg_index], rays_v_in_mask_i[fg_index], \
+            rays_color_in_mask_i[fg_index]  # pick out rays
+        mask_in_pick = np.ones_like(rays_o_in_pick[:, 0]).reshape(-1, 1)
+        rays_o_in_pick, rays_v_in_pick, true_color_in_pick, mask_in_pick = \
+            torch.from_numpy(rays_o_in_pick.astype(np.float32)).to(self.device), \
+                torch.from_numpy(rays_v_in_pick.astype(np.float32)).to(self.device), \
+                torch.from_numpy(true_color_in_pick.astype(np.float32)).to(self.device), \
+                torch.from_numpy(mask_in_pick.astype(np.bool_)).to(self.device)
+        # rest from gen_random_at, that is randomly gen
+        # data_out = (self.gen_random_rays_at(img_idx, outer_count)).detach().cpu().numpy()  # gen_random_rays_at and make it to numpy
+        data_out = self.gen_random_rays_at(img_idx, outer_count)
+        rays_o_out, rays_v_out, true_rgb_out, mask_out = data_out[:, :3], data_out[:, 3: 6], data_out[:, 6: 9], data_out[:, 9: 10]
+        # import pdb
+        # pdb.set_trace()
+        rays_o, rays_v, rays_rgb, rays_mask = torch.cat([rays_o_in_pick, rays_o_out], dim=0), \
+            torch.cat([rays_v_in_pick, rays_v_out], dim=0), torch.cat([true_color_in_pick, true_rgb_out], dim=0), torch.cat([mask_in_pick, mask_out], dim=0)
+
+        return rays_o, rays_v, rays_rgb, rays_mask
+
     def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1):
         """
         Interpolate pose between two cameras.
@@ -226,13 +313,21 @@ class Dataset:
         rays_o = trans[None, None, :3].expand(rays_v.shape)  # W, H, 3
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
-    def near_far_from_sphere(self, rays_o, rays_d):
-        a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)
-        b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
-        mid = 0.5 * (-b) / a
-        near = mid - 1.0
-        far = mid + 1.0
-        # import pdb
+    def near_far_from_sphere(self, rays_o, rays_d, center=torch.zeros(3).cuda(), radius=1.0): # this should be set from the org setting conf or json
+        if self.sphere_center is not None:
+            center = self.sphere_center
+            radius = self.radius
+        a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)  #
+        # print("running on center and radius " + str(center) + " " + str(radius))
+        # b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
+        # mid = 0.5 * (-b) / a
+        #
+        b_2 = torch.sum((rays_o - center) * rays_d, dim=-1, keepdim=True)
+        mid = (-b_2) / a
+
+        near = mid - radius
+        far = mid + radius
+       # import pdb
         # pdb.set_trace()
         return near, far
 

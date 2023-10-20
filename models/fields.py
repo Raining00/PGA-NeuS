@@ -153,7 +153,7 @@ class RenderingNetwork(nn.Module):
         if self.mode == 'idr':
             rendering_input = torch.cat([points, view_dirs, normals, feature_vectors], dim=-1)
         elif self.mode == 'no_view_dir':
-            rendering_input = torch.cat([points, normals, feature_vectors], dim=-1)
+            rendering_input = torch.cat([points, normals, torch.zeros_like(view_dirs), feature_vectors], dim=-1)
         elif self.mode == 'no_normal':
             rendering_input = torch.cat([points, view_dirs, feature_vectors], dim=-1)
 
