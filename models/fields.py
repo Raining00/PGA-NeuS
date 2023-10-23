@@ -147,13 +147,14 @@ class RenderingNetwork(nn.Module):
     def forward(self, points, normals, view_dirs, feature_vectors):
         if self.embedview_fn is not None:
             view_dirs = self.embedview_fn(view_dirs)
+            # print(view_dirs.shape)
 
         rendering_input = None
 
         if self.mode == 'idr':
             rendering_input = torch.cat([points, view_dirs, normals, feature_vectors], dim=-1)
         elif self.mode == 'no_view_dir':
-            rendering_input = torch.cat([points, normals, torch.zeros_like(view_dirs), feature_vectors], dim=-1)
+            rendering_input = torch.cat([points, torch.zeros_like(view_dirs), normals, feature_vectors], dim=-1)
         elif self.mode == 'no_normal':
             rendering_input = torch.cat([points, view_dirs, feature_vectors], dim=-1)
 

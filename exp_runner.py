@@ -391,7 +391,7 @@ class Runner:
 
         mesh = trimesh.Trimesh(vertices, triangles)
         mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)), encoding='ascii')
-
+        print("save at " + os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)))
         logging.info('End')
 
     def interpolate_view(self, img_idx_0, img_idx_1):
@@ -561,18 +561,9 @@ class Runner:
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
             del render_out
 
-        print(translation.grad.shape)
-
-        # img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
-        #     [image_rgb.shape[0], image_rgb.shape[1], 3]) * 256).clip(0, 255).astype(np.uint8)
-        # cv.imwrite('dynamic_train.png', img_fine)
-        print_ok('dynamic train has done!')
-        return
-
-
     def render_novel_image_with_RTKM(self):
         q = [1, 0, 0, -0]
-        t = [0.000, 0.0000, 0.11]
+        t = [0.000, 0.0000, 0.10]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -608,7 +599,7 @@ class Runner:
         # set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         # file_name_with_extension = os.path.basename(setting_json_path)
         # case_name, file_extension = os.path.splitext(file_name_with_extension)
-        render_path = os.path.join(self.base_exp_dir, "test.png")
+        render_path = os.path.join(self.base_exp_dir, "test_3.png")
         print("Saving render img at " + render_path)
         cv.imwrite(render_path, img)
 
@@ -641,20 +632,13 @@ if __name__ == '__main__':
         runner.train()
     elif args.mode == 'validate_mesh':
         runner.validate_mesh(world_space=False, resolution=512, threshold=args.mcube_threshold)
-    elif args.mode == 'render_at':
-        runner.save_render_pic_at(args.render_at_pose_path)
-    elif args.mode == 'render_motion':
-        runner.render_motion(args.render_at_pose_path)
-    elif args.mode == 'train_dynamic':
-        runner.train_dynamic_single_frame(args.render_at_pose_path)
-    elif args.mode == 'render_rtkm':
-        runner.render_novel_image_with_RTKM()
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
         img_idx_1 = int(img_idx_1)
         runner.interpolate_view(img_idx_0, img_idx_1)
-    
+    elif args.mode == 'render_rtkm':
+        runner.render_novel_image_with_RTKM()
 
 """
 conda activate neus
@@ -691,6 +675,8 @@ python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_ob
 python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj4.conf --case rws_obj4
 python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5
 
-python exp_runner.py --mode validate_mesh --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5 --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_multi_qrs_obj5.conf --case duck_3d
+python exp_runner.py --mode render_rtkm --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5 --is_continue
+python exp_runner.py --mode validate_mesh --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case duck_3d --is_continue
+python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case duck_3d_dense 
+
 """
