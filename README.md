@@ -98,12 +98,6 @@ Cite as below if you find this repository is helpful to your project:
   year={2021}
 }
 ```
-## What‘s new in this json-supported neus:
-
-1. fix the bug that the program will occurs errors in some computers due to the confused usage of cpu() and cuda()
-2. make some new configs and new dataset maker so that it can read and generate rays from a json_based camera poses
-3. have specify sampling function so that sample enough rays within the mask, not just randomly
-4. realize the function that can apply an outer R&T with a specified camera pose, this is designed for phy-simulation
 
 ## Acknowledgement
 

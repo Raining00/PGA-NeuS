@@ -31,10 +31,8 @@ def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     vertices, triangles = mcubes.marching_cubes(u, threshold)
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
-    print("BB BOX::: ")
-    print(b_max_np)
-    print(b_min_np)
-    # import pdb; pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles
 

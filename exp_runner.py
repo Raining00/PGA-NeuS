@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import logging
 import argparse
 import numpy as np
@@ -33,32 +32,6 @@ def print_warning(*message):
 
 def print_info(*message):
     print('\033[96m', *message, '\033[0m')
-
-
-def calc_new_pose(setting_path):
-    # TODO: read pose and movement from one json file and calc new pose
-    # returns new camera pose calculated by that json file
-    with open(setting_path, "r") as json_file:
-        all_json_data = json.load(json_file)
-
-    # q, t, original_mat = None, None, None
-    t, q, original_mat = all_json_data['translation'], all_json_data['rotation'], all_json_data["1_1_M"]
-    if q is None:
-        print("error at reading setting " + setting_path)
-        exit(-1)
-
-    w, x, y, z = q
-    rotate_mat = np.array([
-        [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)]
-    ])
-    transform_matrix = np.zeros((4, 4))
-    transform_matrix[0:3, 0:3] = rotate_mat
-    transform_matrix[0:3, 3] = t
-    transform_matrix[3, 3] = 1.0
-
-    return transform_matrix @ original_mat
 
 
 class Runner:
@@ -130,6 +103,7 @@ class Runner:
                     model_list.append(model_name)
             model_list.sort()
             latest_model_name = model_list[-1]
+
         if latest_model_name is not None:
             logging.info('Find checkpoint: {}'.format(latest_model_name))
             self.load_checkpoint(latest_model_name)
@@ -145,10 +119,15 @@ class Runner:
         image_perm = self.get_image_perm()
 
         for iter_i in tqdm(range(res_step)):
-            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
-
-            rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
+            if self.dataset.focus_rays_in_mask:
+                rays_o, rays_d, true_rgb, mask = self.dataset.select_random_rays_in_masks(
+                    image_perm[self.iter_step % len(image_perm)], self.batch_size)
+            else:
+                data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
+                rays_o, rays_d, true_rgb, mask = data[:, :3], data[:, 3: 6], data[:, 6: 9], data[:, 9: 10]
+            # center = torch.Tensor([0.05, -0.1, 0]).cuda()
             near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
+
             background_rgb = None
             if self.use_white_bkgd:
                 background_rgb = torch.ones([1, 3])
@@ -409,12 +388,9 @@ class Runner:
 
         if world_space:
             vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
-            print("SCALE MAP")
-            print(self.dataset.scale_mats_np[0][0, 0])
-            print(self.dataset.scale_mats_np[0][:3, 3][None])
 
         mesh = trimesh.Trimesh(vertices, triangles)
-        mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)))
+        mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)), encoding='ascii')
 
         logging.info('End')
 
@@ -452,7 +428,6 @@ class Runner:
         render_path = set_dir + "/" + case_name + ".png"
         print("Saving render img at " + render_path)
         cv.imwrite(render_path, img)
-        return
 
     def render_motion(self, setting_json_path):
         with open(setting_json_path, "r") as json_file:
@@ -653,7 +628,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/base.conf')
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--render_at_pose_path', type=str, default="./confs/base_movement.json")
     parser.add_argument('--mcube_threshold', type=float, default=0.0)
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
@@ -682,7 +656,6 @@ if __name__ == '__main__':
         runner.interpolate_view(img_idx_0, img_idx_1)
     
 
-#  example cmd in rebuilding:
 """
 conda activate neus
 cd D:/gitwork/NeuS
@@ -694,6 +667,8 @@ python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird 
 python exp_runner.py --mode render_motion --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/transform.json
 
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
+python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
+
 python exp_runner.py --mode train --conf ./confs/womask.conf --case bird_ss --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_js.conf --case sim_ball --is_continue
 python exp_runner.py --mode train --conf ./confs/womask_js_bk.conf --case r_bk --is_continue
@@ -711,5 +686,11 @@ python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.co
 python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_obstacle --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_object2 
 
+python exp_runner.py --mode debug --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_obstacle --is_continue
+python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj2.conf --case rws_object3
+python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj4.conf --case rws_obj4
+python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5
 
+python exp_runner.py --mode validate_mesh --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5 --is_continue
+python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_multi_qrs_obj5.conf --case duck_3d
 """

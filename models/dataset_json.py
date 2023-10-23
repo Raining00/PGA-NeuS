@@ -62,8 +62,8 @@ class Dataset:
         self.camera_count = conf.get_int('camera_count')
         self.json_type = conf.get_string('json_type')
 
-        print(self.frame_count)
-        print(self.camera_count)
+        # print(self.frame_count)
+        # print(self.camera_count)
         for frame_id in range(1, self.frame_count + 1):
             for camera_id in range(1, self.camera_count + 1):
                 mat_name = str(frame_id) + "_" + str(camera_id)
@@ -191,7 +191,7 @@ class Dataset:
         transform_matrix[0:3, 0:3] = rotation_mat
         transform_matrix[0:3, [3]] = transition
         transform_matrix = torch.from_numpy(transform_matrix)
-        transform_matrix.cuda()   # add to cuda
+        transform_matrix.cuda()  # add to cuda
 
         return self.gen_rays_at_pose_mat(transform_matrix, resolution_level)
 
