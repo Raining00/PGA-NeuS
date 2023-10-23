@@ -87,8 +87,8 @@ class Dataset:
         self.image_pixels = self.H * self.W
 
         # Object scale mat: region of interest to **extract mes-h**
-        object_bbox_min = np.array([-.0, -0.2, -0.005])
-        object_bbox_max = np.array([0.2, 0.0, 0.13])
+        object_bbox_min = np.array([-0.1,  -0.1, -0.1])
+        object_bbox_max = np.array([0.2, 0.2, 0.2])
         self.object_bbox_min = object_bbox_min
         self.object_bbox_max = object_bbox_max
         if conf.get_bool('with_sphere'):  # TODO: need to reset here
