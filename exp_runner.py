@@ -596,7 +596,7 @@ class Runner:
 
     def render_novel_image_with_RTKM(self):
         q = [1, 0, 0, -0]
-        t = [0.000, 0.0000, 0.11]
+        t = [0.000, 0.0000, 0]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -609,14 +609,50 @@ class Runner:
         transform_matrix[0:3, 3] = t
         transform_matrix[3, 3] = 1.0
         inverse_matrix = np.linalg.inv(transform_matrix)
-        original_mat = np.array(
-            [[0.99913844, - 0.02643227, - 0.03199565,  0.03332534],
-            [0.03194597, - 0.00229971,  0.99948695, - 0.22578363],
-            [-0.02649229, - 0.99964796, - 0.00145332, 0.07182068],
-            [0.,          0.,          0.,          1.]]
+        original_mat = np.array([
+        [
+            0.9905086755752563,
+            0.07206929475069046,
+            -0.11704112589359283,
+            0.25
+        ],
+        [
+            0.13745039701461792,
+            -0.519352912902832,
+            0.8434333205223083,
+            -1.4079264402389526
+        ],
+        [
+            -7.450581485102248e-09,
+            -0.8515154123306274,
+            -0.524329423904419,
+            0.9959747791290283
+        ],
+        [
+            0.0,
+            -0.0,
+            -0.0,
+            1.0
+        ]]
         )
         intrinsic_mat = np.array(
-            [[196.04002654133333, 0, 256.14846416266664], [0, 195.57227938666668, 147.136028024], [0, 0, 1]]
+            [
+        [
+            1111.1110311937682,
+            0.0,
+            400.0
+        ],
+        [
+            0.0,
+            1111.1110311937682,
+            300.0
+        ],
+        [
+            0.0,
+            0.0,
+            1.0
+        ]
+            ]
         )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         # original_mat = np.eye(4)
@@ -667,7 +703,7 @@ if __name__ == '__main__':
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'validate_mesh':
-        runner.validate_mesh(world_space=False, resolution=512, threshold=args.mcube_threshold)
+        runner.validate_mesh(world_space=False, resolution=128, threshold=args.mcube_threshold)
     elif args.mode == 'render_at':
         runner.save_render_pic_at(args.render_at_pose_path)
     elif args.mode == 'render_motion':

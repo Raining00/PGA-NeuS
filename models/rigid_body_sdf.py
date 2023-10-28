@@ -134,7 +134,7 @@ class rigid_body_simulator:
         self.floor_faces.from_numpy(floor_faces)
         # load mesh
         self.mesh = trimesh.load(mesh_file_name)
-        vertices = np.array(self.mesh.vertices, dtype=np.float32) - self.mesh.center_mass
+        vertices = np.array(self.mesh.vertices, dtype=np.float32)
         faces = np.array(self.mesh.faces, dtype=np.int32)
         self.mass_center = ti.Vector.field(3, dtype=ti.f32, shape=())
         self.mass_center[None] = ti.Vector(self.mesh.center_mass, dt=ti.f32)
@@ -152,7 +152,9 @@ class rigid_body_simulator:
         print('mass_center', self.mass_center[None] + self.initial_translation)
 
         self.x = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
-        ti.root.dense(ti.i, self.mesh.vertices.shape[0]).place(self.x, self.x.grad)
+        # coordinate at time t
+        self.x_t = ti.Vector.field(3, dtype=ti.f32)
+        ti.root.dense(ti.i, self.mesh.vertices.shape[0]).place(self.x, self.x.grad, self.x_t)
         self.J = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
         self.v_out = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
         self.omega_out = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
@@ -316,7 +318,7 @@ class rigid_body_simulator:
         mass = 1.0
         for i in range(vertices.shape):
             ti.atomic_add(self.mass[None], mass)
-            r = self.x[i]
+            r = self.x[i] - self.mass_center[None]
             # inertia = \sum_{i=1}^{n} m_i (r_i^T r_i I - r_i r_i^T)  https://en.wikipedia.org/wiki/List_of_moments_of_inertia
             # as r_i is a col vector, r_i^T is a row vector, so r_i^T r_i is a scalar (actually is dot product)
             I_i = mass * (r.dot(r) * ti.Matrix.identity(ti.f32, 3) - r.outer_product(r))
@@ -338,9 +340,9 @@ class rigid_body_simulator:
         for i in range(self.x.shape[0]):
             v_out = (self.v[f] + self.dt * self.gravity) * self.linear_damping[None]
             omega_out = self.omega[f] * self.angular_damping[None]
-            ri = self.x[i]
+            ri = self.x[i] - self.mass_center[None]
             # xi = self.translation[f] + quat_to_matrix(self.quat[f]) @ ri
-            if self.sdf_value[i]:
+            if self.sdf_value[i] < 0.01:
                 vi = v_out + omega_out.cross(quat_to_matrix(self.quat[f]) @ ri)
                 if vi.dot(self.sdf_grad[i]) < 0.0:
                     ti.atomic_add(self.num_collision[None], 1)
@@ -349,8 +351,9 @@ class rigid_body_simulator:
     @ti.kernel
     def compute_collision_point(self, f:ti.i32, contact_position:ti.types.ndarray()):
         if self.num_collision[None] > 0:
-            ri = self.sum_position[None] / self.num_collision[None]
-            xi = self.translation[f] + quat_to_matrix(self.quat[f]) @ ri
+            xi = self.translation[f] + quat_to_matrix(self.quat[f]) @ (self.sum_position[None] / self.num_collision[None])
+            for i in ti.static(range(3)):
+                contact_position[i] = xi[i]
 
     @ti.kernel
     def update_state(self, f:ti.i32):
@@ -487,28 +490,33 @@ class rigid_body_simulator:
         for i in ti.static(range(3)):
             self.contact_normal[None][i] = sdf_grad[i]
 
-    def forward(self, frame):
+    @ti.kernel
+    def PositionAtTime(self, f:ti.f32, output:ti.types.ndarray()):
+        for i in range(self.x.shape[0]):
+            tmp = self.translation[f] + quat_to_matrix(self.quat[f]) @ (self.x[i] - self.mass_center[None])
+            for j in ti.static(range(3)):
+                output[i, j] = tmp[i]
+
+    def forward(self, frame, quary_func):
         if frame > 0:
+            quary_position = torch.zeros(self.x.shape[0], 3, device=torch.float32).to(self.device)
             self.set_v()
-            # sdf_value = np.zeros([self.x.shape[0]], dtype=np.float32)
-            # sdf_grad = np.zeros([self.x.shape[0], 3], dtype=np.float32)
-            # contact_position = torch.zeros([3], dtype=torch.float32, device=self.device)
-            # contact_sdf_value = torch.zeros([3], dtype=torch.float32, device=self.device)
-            # contact_normal = torch.zeros([3], dtype=torch.float32, device=self.device)
             for i in range(self.substep * (frame-1), self.substep * frame):
                 self.pre_compute(i)
                 # TODO: get sdf value and grad
-                # sdf_value, sdf_value_grad = get_sdf_info(self.x[i])
+                self.PositionAtTime(i, quary_position)
+                sdf_value, sdf_value_grad = quary_func(quary_position)
 
-                # self.set_sdf_infomation(sdf_value=sdf_value, sdf_value_grad=sdf_value_grad)
+                self.set_sdf_infomation(sdf_value=sdf_value, sdf_value_grad=sdf_value_grad)
                 self.collision_detect(i)
                 
+                contact_position = torch.zeros(3, dtype=torch.float32).to(self.device)
                 # TODO: get contact position
-                # self.compute_collision_point(f=i, contact_position=contact_position)
+                self.compute_collision_point(f=i, contact_position=contact_position)
 
                 # TODO: get contact sdf and normal
-                # contact_sdf_value, contact_normal = get_contact_sdf_info(contact_position)
-                # self.set_collision_sdf_info(sdf_value=contact_sdf_value[0], sdf_value_grad=contact_normal)
+                contact_sdf_value, contact_normal = quary_func(contact_position)
+                self.set_collision_sdf_info(sdf_value=contact_sdf_value, sdf_value_grad=contact_normal)
                 
                 # collision responses
                 self.update_state(i)
@@ -522,22 +530,25 @@ class rigid_body_simulator:
         else:
             return None, None
 
-    def backward(self, frame:int):
+    def backward(self, frame:int, quary_func):
         if frame > 0:
+            quary_position = torch.zeros(self.x.shape[0], 3, device=torch.float32).to(self.device)
             for i in reversed(range((frame - 1) * self.substep, frame * self.substep)):
                 # recalcute sdf information for computing grad
-                # self.pre_compute(i)
+                self.pre_compute(i)
                 # TODO: get sdf value and grad
-                # sdf_value, sdf_value_grad = get_sdf_info(self.x[i])
+                self.PositionAtTime(i, output=quary_position)
+                sdf_value, sdf_value_grad = quary_func(self.x[i])
 
-                # self.set_sdf_infomation(sdf_value=sdf_value, sdf_value_grad=sdf_value_grad)
-                # self.collision_detect(i)
+                self.set_sdf_infomation(sdf_value=sdf_value, sdf_value_grad=sdf_value_grad)
+                self.collision_detect(i)
 
-                # self.compute_collision_point(f=i, contact_position=contact_position)
+                contact_position = torch.zeros(3, dtype=torch.float32).to(self.device)
+                self.compute_collision_point(f=i, contact_position=contact_position)
 
                 # TODO: get contact sdf and normal
-                # contact_sdf_value, contact_normal = get_contact_sdf_info(contact_position)
-                # self.set_collision_sdf_info(sdf_value=contact_sdf_value[0], sdf_value_grad=contact_normal)
+                contact_sdf_value, contact_normal = quary_func(contact_position)
+                self.set_collision_sdf_info(sdf_value=contact_sdf_value[0], sdf_value_grad=contact_normal)
             
                 self.update_state.grad(i)
                 self.collision_detect.grad(i)

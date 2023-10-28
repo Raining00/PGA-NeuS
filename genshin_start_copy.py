@@ -23,6 +23,8 @@ from models.common import *
 from argparse import ArgumentParser
 from exp_runner import Runner
 
+global_debug = True
+
 def load_data(images_path, masks_path, camera_params_path, frames_count): # assmue load from a json file
     print("---------------------Loading image data-------------------------------------")
     with open(camera_params_path, "r") as json_file:

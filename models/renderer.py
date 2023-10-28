@@ -24,7 +24,6 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
     return u
 
-
 def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     print('threshold: {}'.format(threshold))
     u = extract_fields(bound_min, bound_max, resolution, query_func)
@@ -193,6 +192,7 @@ class NeuSRenderer:
             sdf = sdf[(xx, index)].reshape(batch_size, n_samples + n_importance)
 
         return z_vals, sdf
+    
 
     def render_core(self,
                     rays_o,
@@ -220,11 +220,16 @@ class NeuSRenderer:
         pts = pts.reshape(-1, 3)
         dirs = dirs.reshape(-1, 3)
 
+        # import time
+        # t_begin = time.time()
         sdf_nn_output = sdf_network(pts)
         sdf = sdf_nn_output[:, :1]
         feature_vector = sdf_nn_output[:, 1:]
-
         gradients = sdf_network.gradient(pts).squeeze()
+        # t_end = time.time()
+        # print('sdf_network time: {}'.format(t_end - t_begin))
+        # import pdb
+        # pdb.set_trace()
         sampled_color = color_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, 3)
 
         inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
