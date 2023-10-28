@@ -594,7 +594,6 @@ class Runner:
         print_ok('dynamic train has done!')
         return
 
-
     def render_novel_image_with_RTKM(self):
         q = [1, 0, 0, -0]
         t = [0.000, 0.0000, 0.11]
@@ -639,6 +638,8 @@ class Runner:
 
     def get_runner(neus_conf_path, case_name, is_continue):
         return Runner(neus_conf_path, mode="train", case=case_name, is_continue=is_continue)
+
+
 
 
 if __name__ == '__main__':

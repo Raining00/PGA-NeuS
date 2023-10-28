@@ -126,8 +126,8 @@ class GenshinStart(torch.nn.Module):
         # in this step, use 'train' mode as default
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue) 
-        # self.runner_background = \
-        #     Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
+        self.runner_background = \
+            Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
         
         with torch.no_grad():
             self.init_mu = torch.zeros([1], requires_grad=True, device=self.device)
@@ -151,6 +151,81 @@ class GenshinStart(torch.nn.Module):
         # self.frame_counts = 5
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, self.W, self.H)
+
+        self.resolution = 512
+        self.sdf_grid, self.sdf_gard_grid = self.init_sdf_grid(self.resolution)
+
+    def trilinear_interpolation(sdf_values, rel_coord):
+        c000, c100, c010, c001, c110, c101, c011, c111 = sdf_values
+
+        x, y, z = rel_coord
+
+        c00 = c000 * (1 - x) + c100 * x
+        c01 = c001 * (1 - x) + c101 * x
+        c10 = c010 * (1 - x) + c110 * x
+        c11 = c011 * (1 - x) + c111 * x
+
+        c0 = c00 * (1 - y) + c10 * y
+        c1 = c01 * (1 - y) + c11 * y
+
+        c = c0 * (1 - z) + c1 * z
+
+        return c
+
+    #generate a grid from original network
+    def init_sdf_grid(self, resolution=512):
+        bound_min = torch.tensor(self.runner_background.dataset.object_bbox_min, dtype=torch.float32)
+        bound_max = torch.tensor(self.runner_background.dataset.object_bbox_max, dtype=torch.float32)
+        sdf_grid, sdf_gard_grid = [], []
+        N = 64
+        X = torch.linspace(bound_min[0], bound_max[0], resolution).split(N)
+        Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(N)
+        Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(N)
+        for xi, xs in enumerate(X):
+            for yi, ys in enumerate(Y):
+                for zi, zs in enumerate(Z):
+                    xx, yy, zz = torch.meshgrid(xs, ys, zs)
+                    pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)
+                    sdf_nn_output = self.runner_background.sdf_network(pts).reshape(len(xs), len(ys), len(zs))  # cal sdf , as
+                    val, val_grad = sdf_nn_output[:, :1], self.runner_background.sdf_network.gradient(pts).squeeze()  # cal sdf_grad
+                    sdf_grid[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
+                    sdf_gard_grid[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val_grad
+        return torch.tensor(sdf_grid, dtype=torch.float32), torch.tensor(sdf_gard_grid, dtype=torch.float32)
+
+    def grid_trilinear_interpolation(self, grid_values, rel_coord):
+        c000, c100, c010, c001, c110, c101, c011, c111 = grid_values
+        x, y, z = rel_coord
+        c00 = c000 * (1 - x) + c100 * x
+        c01 = c001 * (1 - x) + c101 * x
+        c10 = c010 * (1 - x) + c110 * x
+        c11 = c011 * (1 - x) + c111 * x
+        c0 = c00 * (1 - y) + c10 * y
+        c1 = c01 * (1 - y) + c11 * y
+        c = c0 * (1 - z) + c1 * z
+
+        return c
+
+    def get_background_sdf_from_grid(self, xyz):  # xyz = torch.tensor(3,dtype=f32)
+        bound_min = torch.tensor(self.runner_background.dataset.object_bbox_min, dtype=torch.float32)
+        bound_max = torch.tensor(self.runner_background.dataset.object_bbox_max, dtype=torch.float32)
+        voxel_size = (bound_max - bound_min) / self.resolution
+        voxel_coord = torch.floor((xyz - bound_min) / voxel_size).long()  # calc coord
+        sdf_values = [
+            self.sdf_grid[voxel_coord[0], voxel_coord[1], voxel_coord[2]],
+            self.sdf_grid[voxel_coord[0] + 1, voxel_coord[1], voxel_coord[2]],
+            self.sdf_grid[voxel_coord[0], voxel_coord[1] + 1, voxel_coord[2]],
+            self.sdf_grid[voxel_coord[0], voxel_coord[1], voxel_coord[2] + 1],
+            self.sdf_grid[voxel_coord[0] + 1, voxel_coord[1] + 1, voxel_coord[2]],
+            self.sdf_grid[voxel_coord[0] + 1, voxel_coord[1], voxel_coord[2] + 1],
+            self.sdf_grid[voxel_coord[0], voxel_coord[1] + 1, voxel_coord[2] + 1],
+            self.sdf_grid[voxel_coord[0] + 1, voxel_coord[1] + 1, voxel_coord[2] + 1]
+        ]
+        sdf = self.grid_trilinear_interpolation(sdf_values, voxel_coord)
+        return sdf
+    def get_sdf_value_from_background(self, input_x):
+        # return sdf and grad in for position,
+
+        return
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
