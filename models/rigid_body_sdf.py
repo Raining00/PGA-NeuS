@@ -125,13 +125,7 @@ class rigid_body_simulator:
     def __init__(self, mesh_file_name, options):
         assert options is not None
         assert mesh_file_name is not None, 'mesh_file_name is None. You need to privide a mesh file name.'
-            # floor
-        floor_vertices =  np.array([[-5.0, 0.0, -5.0], [-5.0, 0.0, 5.0], [5.0, 0.0, 5.0], [5.0, 0.0, -5.0]])
-        floor_faces = np.array([[0, 1, 2], [0, 2, 3]]).flatten()
-        self.floor_vertices = ti.Vector.field(3, dtype=ti.f32, shape=4)
-        self.floor_faces = ti.field(dtype=ti.i32, shape=6)
-        self.floor_vertices.from_numpy(floor_vertices)
-        self.floor_faces.from_numpy(floor_faces)
+
         # load mesh
         self.mesh = trimesh.load(mesh_file_name)
         vertices = np.array(self.mesh.vertices, dtype=np.float32)
@@ -141,15 +135,12 @@ class rigid_body_simulator:
 
         if options['frames'] is not None:
             self.frames = options['frames']
-        
         if options['transform'] is not None:
             self.initial_translation = ti.Vector(options['transform'][0:3], dt=ti.f32)
             self.initial_quat = ti.Vector(form_euler(options['transform'][3:6]), dt=ti.f32)
         else:
             self.initial_quat = ti.Vector([1.0, 0.0, 0.0, 0.0])
             self.initial_translation = ti.Vector([0.0, 0.0, 0.0])
-
-        print('mass_center', self.mass_center[None] + self.initial_translation)
 
         self.x = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
         ti.root.dense(ti.i, self.mesh.vertices.shape[0]).place(self.x, self.x.grad)
@@ -210,9 +201,9 @@ class rigid_body_simulator:
         # conbvert mesh to taichi data structure
         self.init_state(vertices, faces)
         self.inv_mass = 1.0 / self.mass[None]
-
         # rigid body parameters
         self.gravity = ti.Vector([0.0, 0.0, -9.8])
+
         # params need to be optimized
         self.ke = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
         self.mu = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
@@ -227,11 +218,7 @@ class rigid_body_simulator:
         assert options['angular_damping'] is not None, 'angular_damping is None. You need to privide a angular_damping value.'
         self.angular_damping[None] = options['angular_damping']
 
-        self.loss = ti.field(dtype=ti.f32, needs_grad=True)
-        ti.root.place(self.loss, self.loss.grad)
-
         # simulation flag
-        self.pause = True
         self.device = 'cuda:0'
 
     def set_init_translation(self, translation:ti.types.ndarray()):
@@ -336,14 +323,8 @@ class rigid_body_simulator:
             # J = F · Δt = m · Δv,  F = m · Δv / Δt = J / Δt
             # torque = r × F = r × (J / Δt) = (r × J) / Δt
             # Δω = I^(-1) · torque · Δt = I^(-1) · (r × J) / Δt · Δt = I^(-1) · (r × J)
-            # update velocity
         self.v_out[f] = ti.select(self.num_collision[None] > 0, self.v_in[f] + self.inv_mass * self.J[f], self.v_in[f])
         self.omega_out[f] = ti.select(self.num_collision[None] > 0, self.omega_in[f] + self.inertial[f].inverse() @ Rri_mat @ self.J[f], self.omega_in[f])
-        # self.v_out[f] +=  self.inv_mass * self.J[f]
-        # self.omega_out[f] += self.inertial[f].inverse() @ Rri_mat @ self.J[f]
-        # elif self.num_collision[None] == 0:
-        #     self.v_out[f] = v_out
-        #     self.omega_out[f] = omega_out
         wt = self.omega_out[f] * self.dt * 0.5
         dq = quat_mul(ti.Vector([0.0, wt[0], wt[1], wt[2]]), self.quat[f])
         self.translation[f + 1] = self.translation[f] + self.dt * self.v_out[f]
@@ -396,11 +377,8 @@ class rigid_body_simulator:
         self.omega_in.grad.fill(0.0)
         self.v_out.grad.fill(0.0)
         self.omega_out.grad.fill(0.0)
-
-    @ti.kernel
-    def compute_loss(self):
-        delta = self.translation[self.frames * self.substep - 1] - self.TARGET
-        self.loss[None] = delta.dot(delta)
+        self.ke.grad[None] = 0.0
+        self.mu.grad[None] = 0.0
 
     # dLdt: translation grad 
     # dLdq: rotation grad
@@ -410,15 +388,7 @@ class rigid_body_simulator:
             self.translation.grad[f][i] = dLdt[i]
             self.quat.grad[f][i] = dLdq[i]
         self.quat.grad[f][3] = dLdq[3]
-        # print(f'frames:{f} translation grad:{self.translation.grad[f]}')
-        # print(f'frames:{f} quat grad:{self.quat.grad[f]}')
 
-
-    @ti.kernel
-    def optimized(self):
-        self.init_v[None] -= self.init_v.grad[None] * self.learning_rate
-        self.init_omega[None] -= self.init_omega.grad[None] * self.learning_rate
-        
     @ti.kernel
     def get_simulation_grad(self, translation_grad:ti.types.ndarray(), quat_grad:ti.types.ndarray()):
         for i in ti.static(range(3)):
@@ -439,6 +409,7 @@ class rigid_body_simulator:
             self.sdf_value[i] = sdf_value[i]
             for j in ti.static(range(3)):
                 self.sdf_grad[i][j] = sdf_grad[i][j]
+
     @ti.kernel
     def set_collision_sdf_info(self, sdf_value:ti.f32, sdf_grad:ti.types.ndarray()):
         self.contact_sdf[None] = sdf_value
@@ -466,10 +437,10 @@ class rigid_body_simulator:
                 self.collision_detect(i)
                 
                 contact_position = torch.zeros(3, dtype=torch.float32).to(self.device)
-                # TODO: get contact position
+                # get contact position
                 self.compute_collision_point(f=i, contact_position=contact_position)
 
-                # TODO: get contact sdf and normal
+                # get contact sdf and normal
                 contact_sdf_value, contact_normal = quary_func(contact_position)
                 self.set_collision_sdf_info(sdf_value=contact_sdf_value, sdf_value_grad=contact_normal)
                 
@@ -530,70 +501,3 @@ class rigid_body_simulator:
     def set_init_v(self, v:ti.types.ndarray()):
         for i in ti.static(range(3)):
             self.init_v[None][i] = v[i]
-
-    def train(self):
-        loss = []
-        for iters in range(self.train_iters):
-            self.clear()
-            self.clear_gradients()
-            # with ti.ad.Tape(loss=self.loss, validation=False):
-            l = self.forward()
-            self.loss.grad[None] = 1.0
-            self.backwards()
-            if l < 1e-6:
-                break
-            loss.append(l)
-            self.optimized()
-            if iters % 10 == 0:
-                print('grad', self.init_v.grad[None], self.init_omega.grad[None])
-                print('after optimized:')
-                print('v:', self.init_v[None])
-                print('omega:', self.init_omega[None])
-                print('loss:', loss[-1])
-                print(f'TAGET:{self.TARGET}, final position:{self.translation[self.frames * self.substep - 1]}')
-        # for i in range(self.substep * self.frames - 1):
-        #     if i % self.substep == 0:
-        #         self.get_transform_matrix(i)
-        #         self.render()
-        print('optimized result')
-        self.clear()
-        self.forward()
-        print(f'TAGET:{self.TARGET}, final position:{self.translation[self.frames * self.substep - 1]}')
-        for i in range(self.substep * self.frames - 1):
-            if i % self.substep == 0:
-                self.get_transform_matrix(i)
-                self.render()
-        import matplotlib.pyplot as plt
-        # title
-        plt.title('loss')
-        plt.plot(loss)
-        plt.show()
-
-
-if __name__ == '__main__':
-    parser = ArgumentParser()
-    parser.add_argument('--bouncing_coefficient', type=float, default=0.5)
-    parser.add_argument('--friction_coefficient', type=float, default=0.2)
-    parser.add_argument('--linear_damping', type=float, default=0.999)
-    parser.add_argument('--angular_damping', type=float, default=0.998)
-    parser.add_argument('--translation', type=float, nargs='+', default=[0.0, 0.0, 0.0], help='translation')
-    parser.add_argument('--rotation', type=float, nargs='+', default=[0.0, 0.0, 0.0], help='euler angle in degree')
-
-    args = parser.parse_args()
-    params = dict(frames=100,
-                  ke=args.bouncing_coefficient,
-                  mu=args.friction_coefficient,
-                  transform=args.translation + args.rotation,
-                  linear_damping=args.linear_damping,
-                  angular_damping=args.angular_damping)
-
-    current_directory = os.path.dirname(os.path.abspath(__file__))
-    file_name = Path(current_directory) / 'test.obj'
-    
-    robot = rigid_body_simulator(file_name,  {'frames': 100 ,
-                                    'ke': 0.5,
-                                    'mu': 0.2, 
-                                    'transform': [0.0, 2.0, 0.0, 0.0, 0.0, 0.0],
-                                    'linear_damping': 0.999,
-                                    'angular_damping': 0.998})
-    robot.train()
