@@ -154,4 +154,5 @@ data
 public_data
 exp
 tmp
+dynamic_test
 *.zip

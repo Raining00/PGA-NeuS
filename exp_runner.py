@@ -596,7 +596,7 @@ class Runner:
 
     def render_novel_image_with_RTKM(self):
         q = [1, 0, 0, -0]
-        t = [0.000, 0.0000, 0]
+        t = [-0.1000, 0.0000, 0.3]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -660,8 +660,8 @@ class Runner:
         # original_mat[3, 3] = 0.2
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
-        self.dataset.W = 512
-        self.dataset.H = 288
+        self.dataset.W = 800
+        self.dataset.H = 600
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
         img = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
         # img loss

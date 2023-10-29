@@ -152,9 +152,7 @@ class rigid_body_simulator:
         print('mass_center', self.mass_center[None] + self.initial_translation)
 
         self.x = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
-        # coordinate at time t
-        self.x_t = ti.Vector.field(3, dtype=ti.f32)
-        ti.root.dense(ti.i, self.mesh.vertices.shape[0]).place(self.x, self.x.grad, self.x_t)
+        ti.root.dense(ti.i, self.mesh.vertices.shape[0]).place(self.x, self.x.grad)
         self.J = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
         self.v_out = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
         self.omega_out = ti.Vector.field(3, dtype=ti.f32, needs_grad=True)
@@ -232,17 +230,6 @@ class rigid_body_simulator:
         self.loss = ti.field(dtype=ti.f32, needs_grad=True)
         ti.root.place(self.loss, self.loss.grad)
 
-        # set up ggui
-        #create a window
-        self.window = ti.ui.Window(name='Rigid body dynamics', res=(1280, 720), fps_limit=60, pos=(150,150))
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.Camera()
-        self.camera.position(1,2,3)
-        self.camera.lookat(0,0,0)
-        self.camera.up(0,1,0)
-        self.camera.projection_mode(ti.ui.ProjectionMode.Perspective)
-        self.scene.set_camera(self.camera)
         # simulation flag
         self.pause = True
         self.device = 'cuda:0'
@@ -255,24 +242,6 @@ class rigid_body_simulator:
         for i in range(4):
             self.initial_quat[i] = quat[i]
 
-    def run(self):
-        i = 0
-        while self.window.running:
-            if self.window.is_pressed(ti.ui.LEFT, 'b'):
-                self.pause = not self.pause
-            if not self.pause:
-        # for i in range(self.substep * self.frames - 1):
-                self.clear()
-                self.step(i)
-                ti.sync()
-                i += 1
-            if i % self.substep == 0:
-                # print('x shape', self.x.shape)
-                self.get_transform_matrix(i)
-                self.render()
-                if i > self.frames * self.substep - 1:
-                    self.pause = True
-
     @ti.kernel
     def get_transform_matrix(self, f:ti.i32):
         R = quat_to_matrix(self.quat[f])
@@ -282,20 +251,6 @@ class rigid_body_simulator:
         T[2, 3] = self.translation[f][2]
         T[0:3, 0:3] = R
         self.T[0] = T
-
-    def render(self, frame=0):
-                 
-        self.camera.track_user_inputs(self.window, movement_speed=0.05, hold_key=ti.ui.RMB)
-        self.scene.set_camera(self.camera)
-        self.scene.ambient_light((0.8, 0.8, 0.8))
-        self.scene.point_light(pos=(1,2,3), color=(1, 1, 1))
-        # draw the floor
-        self.scene.mesh(self.floor_vertices, self.floor_faces, color=(0.5, 0.5, 0.5),show_wireframe=True)
-        self.scene.mesh_instance(self.x, self.indices, color=(0.5, 0.5, 0.5),show_wireframe=True, transforms=self.T)
-        # self.scene.mesh(self.x, self.indices, color=(0.5, 0.5, 0.5),show_wireframe=True)
-        self.canvas.scene(self.scene)
-        self.window.show()
-
     
     @ti.kernel
     def init_state(self, vertices:ti.types.ndarray(), faces:ti.types.ndarray()):
@@ -536,7 +491,7 @@ class rigid_body_simulator:
             for i in reversed(range((frame - 1) * self.substep, frame * self.substep)):
                 # recalcute sdf information for computing grad
                 self.pre_compute(i)
-                # TODO: get sdf value and grad
+                # get sdf value and grad
                 self.PositionAtTime(i, output=quary_position)
                 sdf_value, sdf_value_grad = quary_func(self.x[i])
 
@@ -545,11 +500,11 @@ class rigid_body_simulator:
 
                 contact_position = torch.zeros(3, dtype=torch.float32).to(self.device)
                 self.compute_collision_point(f=i, contact_position=contact_position)
-
-                # TODO: get contact sdf and normal
+                # get contact sdf and normal
                 contact_sdf_value, contact_normal = quary_func(contact_position)
                 self.set_collision_sdf_info(sdf_value=contact_sdf_value[0], sdf_value_grad=contact_normal)
-            
+
+                # backward
                 self.update_state.grad(i)
                 self.collision_detect.grad(i)
                 self.pre_compute.grad(i)
