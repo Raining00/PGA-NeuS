@@ -1,27 +1,18 @@
-import os
-import time
 import json
 import logging
-import argparse
 import numpy as np
 import cv2 as cv
-import trimesh
 import torch
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
-from shutil import copyfile
 from icecream import ic
-from tqdm import tqdm
 from tqdm import trange
-from pyhocon import ConfigFactory
-from models.dataset import Dataset
-from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
-from models.renderer import NeuSRenderer
-from models.rigid_body import rigid_body_simulator
+# from models.rigid_body import rigid_body_simulator
+# sdf collision version
+from models.engine.rigid_body_sdf import rigid_body_simulator
 from models.common import *
 from argparse import ArgumentParser
 from exp_runner import Runner
-
+import time
 
 def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False, pic_mode="png"): # assmue load from a json file
     print("---------------------Loading image data-------------------------------------")
@@ -41,7 +32,7 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
         image_I_path = images_path + "/" + picture_name + "." + pic_mode
         image = cv.imread(image_I_path)
         images.append(np.array(image)) 
-        mask_I_path = masks_path + "/mask_" + picture_name + "." + pic_mode
+        mask_I_path = masks_path + "/" + picture_name + "." + pic_mode
         mask = cv.imread(mask_I_path)
         masks.append(np.array(mask))
         if with_fixed_camera:
@@ -99,10 +90,10 @@ def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
 class GenshinStart(torch.nn.Module):
     def __init__(self, setting_json_path):
         super(GenshinStart, self).__init__()
-        self.flag = 0
-        self.device = 'cuda:0'
+
         with open(setting_json_path, "r") as json_file:
             motion_data = json.load(json_file)
+        self.device = motion_data["device"]
         static_mesh = motion_data["static_mesh_path"]
         option = {'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"], 
@@ -111,11 +102,10 @@ class GenshinStart(torch.nn.Module):
                   'transform': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
+                  
         self.physical_simulator = rigid_body_simulator(static_mesh, option)
         self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
         self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
-        self.max_frames = 1
-        self.translation, self.quaternion= [], []
         self.static_object_conf_path =    motion_data["neus_object_conf_path"]
         self.static_object_name =     motion_data['neus_static_object_name']
         self.static_object_continue =     motion_data['neus_static_object_continue']
@@ -123,7 +113,6 @@ class GenshinStart(torch.nn.Module):
         self.static_background_conf_path = motion_data["neus_background_conf_path"]       
         self.static_background_name = motion_data['neus_static_background_name']
         self.static_background_continue = motion_data['neus_static_background_continue']
-        # in this step, use 'train' mode as default
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue) 
         self.runner_background = \
@@ -146,8 +135,9 @@ class GenshinStart(torch.nn.Module):
         
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
-        # images, masks, cameras_K, cameras_M = images[9:18], masks[9:18], cameras_K[9:18], cameras_M[9:18]  # TO DO: temp debug
         # self.frame_counts = 5
+        self.translation = []
+        self.quaternion = []
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, self.W, self.H)
 
@@ -167,13 +157,11 @@ class GenshinStart(torch.nn.Module):
         return transform_matrix, transform_matrix_inv
     
     
-    def query_sdf(self, pts : torch.tensor(dtype=torch.float32), sdf_query_func, sdf_grad_query_func):
-        with torch.no_grad():
-            # sdf = sdf_query_func(pts)
-            sdf = self.runner_background.sdf_network.sdf(pts)
-            sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze()
+    def query_sdf(self, pts : torch.Tensor):
+        # sdf = sdf_query_func(pts)
+        sdf = self.runner_background.sdf_network.sdf(pts)
+        sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze()
         return sdf, sdf_grad
-
 
     def forward(self, max_f:int):       
         pbar = trange(1, max_f) 
@@ -184,22 +172,23 @@ class GenshinStart(torch.nn.Module):
         with torch.no_grad():
             self.physical_simulator.set_init_v(v=self.init_v)
             self.physical_simulator.set_collision_coeff(mu=self.init_mu, ke=self.init_ke)
-        print_info(f'init v: {self.init_v}')
         for i in pbar:
             print_blink(f'frame id : {i}')               
             orgin_mat_c2w = torch.from_numpy(self.cameras_M[i].astype(np.float32)).to(self.device)
             # orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
-            translation, quaternion = self.physical_simulator.forward(i)
+            translation, quaternion = self.physical_simulator.forward(i, lambda x: self.query_sdf(x))
             translation.requires_grad_(True)
             quaternion.requires_grad_(True)
             self.translation.append(translation)
             self.quaternion.append(quaternion)
             print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}')
             rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], self.rays_v_all[i]
-            rays_mask = torch.ones_like(rays_mask)  # full img render
+            # import pdb; pdb.set_trace()
+            # rays_mask = torch.ones_like(rays_mask)  # full img render
             rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
             rays_sum = len(rays_o)
             debug_rgb = []
+            t_begin = time.time()
             for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size), rays_d.split(self.batch_size), rays_gt.split(self.batch_size)):
                 near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
                 background_rgb = None
@@ -207,6 +196,8 @@ class GenshinStart(torch.nn.Module):
                 render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near, far=far, 
                                                                         R=quaternion, T=translation, camera_c2w=orgin_mat_c2w,
                                                                         cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),background_rgb=background_rgb)
+                import pdb; pdb.set_trace()
+                
                 color_fine = render_out["color_fine"]
                 color_error = (color_fine - rays_gt_batch)
                 debug_rgb.append(color_fine.clone().detach().cpu().numpy())
@@ -216,11 +207,14 @@ class GenshinStart(torch.nn.Module):
                 color_fine_loss.backward()  # img_loss for refine R & T
                 torch.cuda.synchronize()
                 del render_out
+            t_end = time.time()
+            print_info(f'forward time: {t_end - t_begin}')
             ### img_debug should has same shape as rays_gt
             debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8) 
             W, H, cnt = self.W, self.H, 0
             rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
             debug_img = np.zeros_like(rays_mask).astype(np.float32)
+
             for index in range(0, H):
                 for j in range(0, W):  
                     if rays_mask[index][j][0]:
@@ -317,19 +311,14 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
 
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
-
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     torch.set_default_dtype(torch.float32)
-
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
     parser = ArgumentParser()
     parser.add_argument('--conf', type=str, default='./dynamic_test/base.json')
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--mcube_threshold', type=float, default=0.0)
-    parser.add_argument('--is_continue', default=False, action="store_true")
-    parser.add_argument('--case', type=str, default='')
     args = parser.parse_args()
     genshinStart = GenshinStart(args.conf)
     optimizer = get_optimizer('train_dynamic', genshinStart=genshinStart)
@@ -338,8 +327,9 @@ if __name__ == '__main__':
         train_velocity()
         train_dynamic()
     else:
-        train_dynamic(5, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
+        train_dynamic(20, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
 
     
-# python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue 
-# D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird --is_continue
+# D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
+# python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
+# python genshin_start.py --mode debug --conf ./confs/json/furina.json

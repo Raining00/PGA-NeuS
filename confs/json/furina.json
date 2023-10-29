@@ -1,0 +1,22 @@
+{
+    "device" : "cuda:0",
+    "static_background_path" : "",
+    "static_mesh_path": "./exp/bunny/wmask/meshes/00155000.ply",
+    "neus_object_conf_path": "./confs/wmask_js_bk_single_multi_qrs_obj5.conf",
+    "neus_static_object_name": "bunny",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/wmask_js_bk_single_multi_qrs_obj4.conf",
+    "neus_static_background_name": "blender_obs_o",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 20,
+    "frame_dt": 0.05,
+    "images_path": "./public_data/bunny/motion/image",
+    "masks_path": "./public_data/bunny/motion/mask",
+    "cameras_setting_path": "./confs/json/fixed_camera_setting.json",
+    "with_fixed_camera" : true,
+    "image_type": "png",
+    "R0": [1.0, 0.0, 0.0, 0.0],
+    "T0": [-0.1, 0.0, 0.3]
+
+}
