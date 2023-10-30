@@ -14,24 +14,25 @@ from argparse import ArgumentParser
 from exp_runner import Runner
 import time
 
-def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False, pic_mode="png"): # assmue load from a json file
+
+def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False,
+                            camera_params_list=None, pic_mode="png"):  # assmue load from a json file
     print("---------------------Loading image data-------------------------------------")
-
-    with open(camera_params_path, "r") as json_file:
-        camera_params_list = json.load(json_file)   
     global_K, global_M = None, None
-
-    if with_fixed_camera:  # in this case, we assume all frames share with the same K & M
+    if with_fixed_camera and camera_params_list is not None:
+        # in this case, we assume all frames share with the same K & M
         global_K = camera_params_list['K']
         global_M = camera_params_list['M']
-        
-        
+    else:   # not pre-defined list
+        with open(camera_params_path, "r") as json_file:
+            camera_params_list = json.load(json_file)
+
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
-    for i in range(1, frames_count+1):
+    for i in range(1, frames_count + 1):
         picture_name = f"{i:04}"
         image_I_path = images_path + "/" + picture_name + "." + pic_mode
         image = cv.imread(image_I_path)
-        images.append(np.array(image)) 
+        images.append(np.array(image))
         mask_I_path = masks_path + "/" + picture_name + "." + pic_mode
         mask = cv.imread(mask_I_path)
         masks.append(np.array(mask))
@@ -44,13 +45,13 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
             cameras_K.append(np.array(camera_K))
             camera_M = camera_params_list[cameras_name + "_M"]
             cameras_M.append(np.array(camera_M))
-    
-
     print("---------------------Load image data finished-------------------------------")
     return images, masks, cameras_K, cameras_M  # returns numpy arrays
 
-def generate_rays_with_K_and_M(transform_matrix, intrinsic_mat, W, H, resolution_level=1):  # transform mat should be c2w mat
-    transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to('cuda:0')# add to cuda
+
+def generate_rays_with_K_and_M(transform_matrix, intrinsic_mat, W, H,
+                               resolution_level=1):  # transform mat should be c2w mat
+    transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to('cuda:0')  # add to cuda
     intrinsic_mat_inv = np.linalg.inv(intrinsic_mat)
     intrinsic_mat_inv = torch.from_numpy(intrinsic_mat_inv.astype(np.float32)).to('cuda:0')
     tx = torch.linspace(0, W - 1, W // resolution_level)
@@ -63,6 +64,7 @@ def generate_rays_with_K_and_M(transform_matrix, intrinsic_mat, W, H, resolution
     rays_o = transform_matrix[None, None, :3, 3].expand(rays_v.shape)  # W, H, 3, start from transform
     return rays_o.transpose(0, 1), rays_v.transpose(0, 1)  # H W 3
 
+
 def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
     # this function generate rays from given img and camera_K & c2w, also returns rays_gt as reference
     # assume input raw images are 255-uint, this function transformed to 1.0-up float0
@@ -70,22 +72,23 @@ def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
     frames_count = len(imgs)
     rays_o_all, rays_v_all, rays_gt_all, rays_mask_all = [], [], [], []
     for i in range(0, frames_count):
-        rays_gt, rays_mask = imgs[i], masks[i] ## check if is  H, W, 3
+        rays_gt, rays_mask = imgs[i], masks[i]  ## check if is  H, W, 3
         rays_gt = rays_gt / 256.0
         rays_gt = rays_gt.reshape(-1, 3)
         rays_gt = torch.from_numpy(rays_gt.astype(np.float32)).to("cuda:0")
-        rays_mask = rays_mask / 255.0 
+        rays_mask = rays_mask / 255.0
         rays_mask = np.where(rays_mask > 0, 1, 0).reshape(-1, 3)
-        rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda:0")        
-        rays_o, rays_v = generate_rays_with_K_and_M(cameras_c2w[i], cameras_K[i], W_all, H_all) ## check if is  H, W, 3
+        rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda:0")
+        rays_o, rays_v = generate_rays_with_K_and_M(cameras_c2w[i], cameras_K[i], W_all, H_all)  ## check if is  H, W, 3
         rays_o = rays_o.reshape(-1, 3)
         rays_v = rays_v.reshape(-1, 3)
         rays_o_all.append(rays_o)
         rays_v_all.append(rays_v)
-        rays_gt_all.append(rays_gt) 
+        rays_gt_all.append(rays_gt)
         rays_mask_all.append(rays_mask)
     # returns rays_o_all, rays_v_all, rays_gt_all, rays_mask_all formulate by frames
     return rays_o_all, rays_v_all, rays_gt_all, rays_mask_all
+
 
 class GenshinStart(torch.nn.Module):
     def __init__(self, setting_json_path):
@@ -96,28 +99,29 @@ class GenshinStart(torch.nn.Module):
         self.device = motion_data["device"]
         static_mesh = motion_data["static_mesh_path"]
         option = {'frames': motion_data["frame_counts"],
-                  'frame_dt': motion_data["frame_dt"], 
+                  'frame_dt': motion_data["frame_dt"],
                   'ke': 0.1,
                   'mu': 0.8,
                   'transform': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
-                  
+
         self.physical_simulator = rigid_body_simulator(static_mesh, option)
         self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
         self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
-        self.static_object_conf_path =    motion_data["neus_object_conf_path"]
-        self.static_object_name =     motion_data['neus_static_object_name']
-        self.static_object_continue =     motion_data['neus_static_object_continue']
+        self.static_object_conf_path = motion_data["neus_object_conf_path"]
+        self.static_object_name = motion_data['neus_static_object_name']
+        self.static_object_continue = motion_data['neus_static_object_continue']
 
-        self.static_background_conf_path = motion_data["neus_background_conf_path"]       
+        self.static_background_conf_path = motion_data["neus_background_conf_path"]
         self.static_background_name = motion_data['neus_static_background_name']
         self.static_background_continue = motion_data['neus_static_background_continue']
         self.runner_object = \
-            Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue) 
+            Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue)
         self.runner_background = \
-            Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
-        
+            Runner.get_runner(self.static_background_conf_path, self.static_background_name,
+                              self.static_background_continue)
+
         with torch.no_grad():
             self.init_mu = torch.zeros([1], requires_grad=True, device=self.device)
             self.init_ke = torch.zeros([1], requires_grad=True, device=self.device)
@@ -129,17 +133,27 @@ class GenshinStart(torch.nn.Module):
         self.frame_counts = motion_data["frame_counts"]
         self.images_path = motion_data["images_path"]
         self.masks_path = motion_data["masks_path"]
-        self.camera_setting_path = motion_data["cameras_setting_path"]
+        self.camera_setting_path = None
         self.with_fixed_camera = motion_data["with_fixed_camera"]
-        images, masks, cameras_K, cameras_M = load_cameras_and_images(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts, with_fixed_camera=self.with_fixed_camera)
-        
+        camera_params_list = None
+        if self.with_fixed_camera:
+            camera_params_list = motion_data['fixed_camera_setting']
+        else:  # need to specify the camera path of the motion
+            self.camera_setting_path = motion_data["cameras_setting_path"]
+        images, masks, cameras_K, cameras_M = (
+            load_cameras_and_images(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts
+                                    , with_fixed_camera=self.with_fixed_camera, camera_params_list=camera_params_list))
+
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
         # self.frame_counts = 5
         self.translation = []
         self.quaternion = []
         with torch.no_grad():
-            self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks, cameras_K, cameras_M, self.W, self.H)
+            self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks,
+                                                                                                       cameras_K,
+                                                                                                       cameras_M,
+                                                                                                       self.W, self.H)
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
@@ -152,19 +166,18 @@ class GenshinStart(torch.nn.Module):
             [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2), translation[2]],
             [0, 0, 0, 1.0]
         ], device=self.device, requires_grad=True, dtype=torch.float32)
-        transform_matrix_inv = torch.inverse(transform_matrix)   # make an inverse
+        transform_matrix_inv = torch.inverse(transform_matrix)  # make an inverse
         transform_matrix_inv.requires_grad_(True)
         return transform_matrix, transform_matrix_inv
-    
-    
-    def query_sdf(self, pts : torch.Tensor):
+
+    def query_sdf(self, pts: torch.Tensor):
         # sdf = sdf_query_func(pts)
         sdf = self.runner_background.sdf_network.sdf(pts)
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze()
         return sdf, sdf_grad
 
-    def forward(self, max_f:int):       
-        pbar = trange(1, max_f) 
+    def forward(self, max_f: int):
+        pbar = trange(1, max_f)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
         self.physical_simulator.clear()
@@ -173,7 +186,7 @@ class GenshinStart(torch.nn.Module):
             self.physical_simulator.set_init_v(v=self.init_v)
             self.physical_simulator.set_collision_coeff(mu=self.init_mu, ke=self.init_ke)
         for i in pbar:
-            print_blink(f'frame id : {i}')               
+            print_blink(f'frame id : {i}')
             orgin_mat_c2w = torch.from_numpy(self.cameras_M[i].astype(np.float32)).to(self.device)
             # orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
             translation, quaternion = self.physical_simulator.forward(i, lambda x: self.query_sdf(x))
@@ -182,22 +195,30 @@ class GenshinStart(torch.nn.Module):
             self.translation.append(translation)
             self.quaternion.append(quaternion)
             print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}')
-            rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], self.rays_v_all[i]
+            rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
+            self.rays_v_all[i]
             # import pdb; pdb.set_trace()
             # rays_mask = torch.ones_like(rays_mask)  # full img render
-            rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
+            rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
+                rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
             rays_sum = len(rays_o)
             debug_rgb = []
             t_begin = time.time()
-            for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size), rays_d.split(self.batch_size), rays_gt.split(self.batch_size)):
+            for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size),
+                                                                 rays_d.split(self.batch_size),
+                                                                 rays_gt.split(self.batch_size)):
                 near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
                 background_rgb = None
                 # this render out contains grad & img loss, find out its reaction with phy simualtion
-                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near, far=far, 
-                                                                        R=quaternion, T=translation, camera_c2w=orgin_mat_c2w,
-                                                                        cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),background_rgb=background_rgb)
-                import pdb; pdb.set_trace()
-                
+                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                        near=near, far=far,
+                                                                        R=quaternion, T=translation,
+                                                                        camera_c2w=orgin_mat_c2w,
+                                                                        cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                        background_rgb=background_rgb)
+                import pdb;
+                pdb.set_trace()
+
                 color_fine = render_out["color_fine"]
                 color_error = (color_fine - rays_gt_batch)
                 debug_rgb.append(color_fine.clone().detach().cpu().numpy())
@@ -210,13 +231,13 @@ class GenshinStart(torch.nn.Module):
             t_end = time.time()
             print_info(f'forward time: {t_end - t_begin}')
             ### img_debug should has same shape as rays_gt
-            debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8) 
+            debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
             W, H, cnt = self.W, self.H, 0
             rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
             debug_img = np.zeros_like(rays_mask).astype(np.float32)
 
             for index in range(0, H):
-                for j in range(0, W):  
+                for j in range(0, W):
                     if rays_mask[index][j][0]:
                         debug_img[index][j][0] = debug_rgb[cnt][0]
                         debug_img[index][j][1] = debug_rgb[cnt][1]
@@ -227,7 +248,7 @@ class GenshinStart(torch.nn.Module):
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
         return global_loss
 
-    def backward(self, max_f:np.int32):
+    def backward(self, max_f: np.int32):
         pbar = trange(1, max_f)
         pbar.set_description('\033[5;30m[Backward]\033[0m')
         for i in pbar:
@@ -249,8 +270,8 @@ class GenshinStart(torch.nn.Module):
                 self.init_translation.backward(retain_graph=True, gradient=translation_grad)
                 self.init_quaternion.backward(retain_graph=True, gradient=quaternion_grad)
 
+
 def get_optimizer(mode, genshinStart):
-    
     optimizer = None
     if mode == "train_static":
         optimizer = torch.optim.Adam(
@@ -259,7 +280,7 @@ def get_optimizer(mode, genshinStart):
             ]
         )
     elif mode == "train_velocity":
-            optimizer = torch.optim.LBFGS(
+        optimizer = torch.optim.LBFGS(
             [
                 {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
             ]
@@ -269,8 +290,8 @@ def get_optimizer(mode, genshinStart):
             [
                 # {"params": getattr(genshinStart,'init_translation'), 'lr': 1e-1},
                 # {'params': getattr(genshinStart,'init_quaternion'), 'lr':1e-1},
-                {'params':getattr(genshinStart, 'init_mu'), 'lr': 1e-2},
-                {'params':getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
+                {'params': getattr(genshinStart, 'init_mu'), 'lr': 1e-2},
+                {'params': getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
                 # {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
             ]
             ,
@@ -279,16 +300,19 @@ def get_optimizer(mode, genshinStart):
 
     return optimizer
 
+
 def train_static(self):
-    static = 0 
+    static = 0
     # train static object -> export as a obj mesh
 
     # train static background -> export as a obj mesh
 
     # also need to train R0 & T0?
-    
+
+
 def train_velocity(self):
     velocity = 1
+
 
 def train_dynamic(max_f, iters, genshinStart, optimizer, device):
     def train_forward(optimizer):
@@ -298,7 +322,7 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
             loss = genshinStart.forward(max_f)
         return loss
 
-    optimizer = get_optimizer('train_dynamic',genshinStart)
+    optimizer = get_optimizer('train_dynamic', genshinStart)
     for i in range(iters):
         loss = train_forward(optimizer=optimizer)
         if loss.norm() < 1e-6:
@@ -329,7 +353,6 @@ if __name__ == '__main__':
     else:
         train_dynamic(20, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
 
-    
 # D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./confs/json/furina.json

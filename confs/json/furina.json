@@ -1,11 +1,11 @@
 {
-    "device" : "cuda:0",
-    "static_background_path" : "",
-    "static_mesh_path": "./exp/bunny/wmask/meshes/00155000.ply",
-    "neus_object_conf_path": "./confs/wmask_js_bk_single_multi_qrs_obj5.conf",
+    "device": "cuda:0",
+    "static_background_path": "",
+    "static_mesh_path": "./exp/bunny/wmask/meshes/00100000.ply",
+    "neus_object_conf_path": "./confs/wmask_blender_bunny.conf",
     "neus_static_object_name": "bunny",
     "neus_static_object_continue": true,
-    "neus_background_conf_path": "./confs/wmask_js_bk_single_multi_qrs_obj4.conf",
+    "neus_background_conf_path": "./confs/wmask_blender_obstacle.conf",
     "neus_static_background_name": "blender_obs_o",
     "neus_static_background_continue": true,
     "batch_size": 512,
@@ -14,9 +14,62 @@
     "images_path": "./public_data/bunny/motion/image",
     "masks_path": "./public_data/bunny/motion/mask",
     "cameras_setting_path": "./confs/json/fixed_camera_setting.json",
-    "with_fixed_camera" : true,
     "image_type": "png",
-    "R0": [1.0, 0.0, 0.0, 0.0],
-    "T0": [-0.1, 0.0, 0.3]
-
+    "R0": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+    ],
+    "T0": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M": [
+            [
+                0.9905086755752563,
+                0.07206929475069046,
+                -0.11704112589359283,
+                0.25
+            ],
+            [
+                0.13745039701461792,
+                -0.519352912902832,
+                0.8434333205223083,
+                -1.4079264402389526
+            ],
+            [
+                -7.450581485102248e-09,
+                -0.8515154123306274,
+                -0.524329423904419,
+                0.9959747791290283
+            ],
+            [
+                0.0,
+                -0.0,
+                -0.0,
+                1.0
+            ]
+        ],
+        "K": [
+            [
+                1111.1110311937682,
+                0.0,
+                400.0
+            ],
+            [
+                0.0,
+                1111.1110311937682,
+                300.0
+            ],
+            [
+                0.0,
+                0.0,
+                1.0
+            ]
+        ]
+    }
 }
