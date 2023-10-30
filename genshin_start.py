@@ -143,17 +143,13 @@ class GenshinStart(torch.nn.Module):
         images, masks, cameras_K, cameras_M = (
             load_cameras_and_images(self.images_path, self.masks_path, self.camera_setting_path, self.frame_counts
                                     , with_fixed_camera=self.with_fixed_camera, camera_params_list=camera_params_list))
-
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
-        # self.frame_counts = 5
         self.translation = []
         self.quaternion = []
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks,
-                                                                                                       cameras_K,
-                                                                                                       cameras_M,
-                                                                                                       self.W, self.H)
+             cameras_K, cameras_M,self.W, self.H)
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion

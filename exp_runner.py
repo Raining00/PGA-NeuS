@@ -596,7 +596,7 @@ class Runner:
 
     def render_novel_image_with_RTKM(self):
         q = [1, 0, 0, -0]
-        t = [-0.1000, 0.0000, 0.3]
+        t = [0000, 0.0000, 0.0]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -717,36 +717,14 @@ if __name__ == '__main__':
         img_idx_0 = int(img_idx_0)
         img_idx_1 = int(img_idx_1)
         runner.interpolate_view(img_idx_0, img_idx_1)
-    
 
 #  example cmd in rebuilding:
 """
 conda activate neus
 cd D:/gitwork/NeuS
-D:
-python exp_runner.py --mode render_at --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/test_render.json
-
-
-python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
-python exp_runner.py --mode render_motion --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/transform.json
-
+D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
-python exp_runner.py --mode train --conf ./confs/womask.conf --case bird_ss --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js.conf --case sim_ball --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk.conf --case r_bk --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single.conf --case real_world_normal --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single.conf --case real_world_normal
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_sparse.conf --case real_world_sparse
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-
-python exp_runner.py --mode train --conf ./confs/wmask_single_blender.conf --case blender_static_test
-python exp_runner.py --mode train --conf ./confs/wmask_single_blender.conf --case blender_high_res
-python exp_runner.py --mode train --conf ./confs/womask_blender_high_res.conf --case blender_high_res
-
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_object
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_obstacle --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_object2 
-
+python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny
+python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny --is_continue
 
 """

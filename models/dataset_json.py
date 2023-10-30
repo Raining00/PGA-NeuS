@@ -87,8 +87,8 @@ class Dataset:
         self.image_pixels = self.H * self.W
 
         # Object scale mat: region of interest to **extract mes-h**
-        object_bbox_min = np.array([-0.5,  -0.5, -0.5])
-        object_bbox_max = np.array([0.5, 0.5, 0.5])
+        object_bbox_min = np.array([-0.3, -0.3, 0.1])
+        object_bbox_max = np.array([0.1, 0.1, 0.5])
         self.object_bbox_min = object_bbox_min
         self.object_bbox_max = object_bbox_max
         if conf.get_bool('with_sphere'):  # TODO: need to reset here
@@ -97,15 +97,8 @@ class Dataset:
         else:
             self.sphere_center = torch.zeros(3)
             self.radius = 1
-
         print('Load data: End')
 
-        self.focus_rays_in_mask = conf.get_bool('focus_rays_in_mask')  # this requires whether gen all rays in mask
-        self.rays_o_in_masks, self.rays_v_in_masks, self.rays_color_in_masks = None, None, None
-
-        def set_image_w_h(self, w, h):
-            self.W = w
-            self.H = h
         def gen_all_rays_in_mask(max_rays_in_gpu=2000000):
             # TODO: gen all rays_o and rays_v in mask for faster training
             print("----------------generating all rays within mask-----------------")
@@ -149,10 +142,11 @@ class Dataset:
             print("------------------generate finished--------------------")
             return rays_o_in_masks, rays_v_in_masks, rays_color_in_masks
 
-        if self.focus_rays_in_mask:
+        if conf['focus_rays_in_mask']:
             self.rays_o_in_masks, self.rays_v_in_masks, self.rays_color_in_masks = gen_all_rays_in_mask()
 
         print('Load data: End')
+
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.
@@ -191,7 +185,7 @@ class Dataset:
         transform_matrix[0:3, 0:3] = rotation_mat
         transform_matrix[0:3, [3]] = transition
         transform_matrix = torch.from_numpy(transform_matrix)
-        transform_matrix.cuda()   # add to cuda
+        transform_matrix.cuda()  # add to cuda
 
         return self.gen_rays_at_pose_mat(transform_matrix, resolution_level)
 
@@ -272,11 +266,13 @@ class Dataset:
         # rest from gen_random_at, that is randomly gen
         # data_out = (self.gen_random_rays_at(img_idx, outer_count)).detach().cpu().numpy()  # gen_random_rays_at and make it to numpy
         data_out = self.gen_random_rays_at(img_idx, outer_count)
-        rays_o_out, rays_v_out, true_rgb_out, mask_out = data_out[:, :3], data_out[:, 3: 6], data_out[:, 6: 9], data_out[:, 9: 10]
+        rays_o_out, rays_v_out, true_rgb_out, mask_out = data_out[:, :3], data_out[:, 3: 6], data_out[:,
+                                                                                             6: 9], data_out[:, 9: 10]
         # import pdb
         # pdb.set_trace()
         rays_o, rays_v, rays_rgb, rays_mask = torch.cat([rays_o_in_pick, rays_o_out], dim=0), \
-            torch.cat([rays_v_in_pick, rays_v_out], dim=0), torch.cat([true_color_in_pick, true_rgb_out], dim=0), torch.cat([mask_in_pick, mask_out], dim=0)
+            torch.cat([rays_v_in_pick, rays_v_out], dim=0), torch.cat([true_color_in_pick, true_rgb_out],
+                                                                      dim=0), torch.cat([mask_in_pick, mask_out], dim=0)
 
         return rays_o, rays_v, rays_rgb, rays_mask
 
@@ -313,7 +309,8 @@ class Dataset:
         rays_o = trans[None, None, :3].expand(rays_v.shape)  # W, H, 3
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
-    def near_far_from_sphere(self, rays_o, rays_d, center=torch.zeros(3).cuda(), radius=1.0): # this should be set from the org setting conf or json
+    def near_far_from_sphere(self, rays_o, rays_d, center=torch.zeros(3).cuda(),
+                             radius=1.0):  # this should be set from the org setting conf or json
         if self.sphere_center is not None:
             center = self.sphere_center
             radius = self.radius
@@ -327,7 +324,7 @@ class Dataset:
 
         near = mid - radius
         far = mid + radius
-       # import pdb
+        # import pdb
         # pdb.set_trace()
         return near, far
 
