@@ -100,13 +100,13 @@ class GenshinStart(torch.nn.Module):
         static_mesh = motion_data["static_mesh_path"]
         option = {'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"],
-                  'ke': 0.1,
-                  'mu': 0.8,
+                  'ke': 0.55,
+                  'mu': 0.25,
                   'transform': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                  'linear_damping': 0.999,
-                  'angular_damping': 0.998}
+                  'linear_damping': 1.0,
+                  'angular_damping': 1.0}
 
-        self.physical_simulator = rigid_body_simulator(static_mesh, option)
+        self.physical_simulator = rigid_body_simulator(static_mesh, option) 
         self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
         self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
@@ -168,8 +168,8 @@ class GenshinStart(torch.nn.Module):
 
     def query_sdf(self, pts: torch.Tensor):
         # sdf = sdf_query_func(pts)
-        sdf = self.runner_background.sdf_network.sdf(pts)
-        sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze()
+        sdf = self.runner_background.sdf_network.sdf(pts).contiguous()
+        sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
 
     def forward(self, max_f: int):
@@ -178,9 +178,10 @@ class GenshinStart(torch.nn.Module):
         global_loss = 0
         self.physical_simulator.clear()
         self.physical_simulator.clear_gradients()
+        print('optimizer init v = ', self.init_v)
         with torch.no_grad():
             self.physical_simulator.set_init_v(v=self.init_v)
-            self.physical_simulator.set_collision_coeff(mu=self.init_mu, ke=self.init_ke)
+            # self.physical_simulator.set_collision_coeff(mu=self.init_mu, ke=self.init_ke)
         for i in pbar:
             print_blink(f'frame id : {i}')
             orgin_mat_c2w = torch.from_numpy(self.cameras_M[i].astype(np.float32)).to(self.device)
@@ -190,7 +191,7 @@ class GenshinStart(torch.nn.Module):
             quaternion.requires_grad_(True)
             self.translation.append(translation)
             self.quaternion.append(quaternion)
-            print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}')
+            # print_info(f'frame:{i}, translation: {translation}, quaternion: {quaternion}')
             rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
             self.rays_v_all[i]
             # import pdb; pdb.set_trace()
@@ -212,9 +213,7 @@ class GenshinStart(torch.nn.Module):
                                                                         camera_c2w=orgin_mat_c2w,
                                                                         cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                         background_rgb=background_rgb)
-                import pdb;
-                pdb.set_trace()
-
+                
                 color_fine = render_out["color_fine"]
                 color_error = (color_fine - rays_gt_batch)
                 debug_rgb.append(color_fine.clone().detach().cpu().numpy())
@@ -225,7 +224,6 @@ class GenshinStart(torch.nn.Module):
                 torch.cuda.synchronize()
                 del render_out
             t_end = time.time()
-            print_info(f'forward time: {t_end - t_begin}')
             ### img_debug should has same shape as rays_gt
             debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
             W, H, cnt = self.W, self.H, 0
@@ -252,13 +250,13 @@ class GenshinStart(torch.nn.Module):
             with torch.no_grad():
                 translation_grad = self.translation[f].grad
                 quaternion_grad = self.quaternion[f].grad
-                print_info(f'translation grad: {translation_grad}, quaternion grad: {quaternion_grad}')
             if f > 0:
                 self.physical_simulator.set_motion_grad(f, translation_grad, quaternion_grad)
-                self.physical_simulator.backward(f)
+                self.physical_simulator.backward(f, lambda x: self.query_sdf(x))
             else:
                 v_grad, omega_grad, ke_grad, mu_grad, translation_grad, quaternion_grad = \
-                    self.physical_simulator.backward(f)
+                    self.physical_simulator.backward(f, lambda x: self.query_sdf(x))
+                print_ok('init_v grad = ', v_grad)
                 self.init_v.backward(retain_graph=True, gradient=v_grad)
                 self.init_omega.backward(retain_graph=True, gradient=omega_grad)
                 self.init_ke.backward(retain_graph=True, gradient=ke_grad)
@@ -286,9 +284,9 @@ def get_optimizer(mode, genshinStart):
             [
                 # {"params": getattr(genshinStart,'init_translation'), 'lr': 1e-1},
                 # {'params': getattr(genshinStart,'init_quaternion'), 'lr':1e-1},
-                {'params': getattr(genshinStart, 'init_mu'), 'lr': 1e-2},
-                {'params': getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
-                # {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
+                # {'params': getattr(genshinStart, 'init_mu'), 'lr': 1e-2},
+                # {'params': getattr(genshinStart, 'init_ke'), 'lr': 1e-1},
+                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
             ]
             ,
             amsgrad=False
@@ -318,15 +316,15 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
             loss = genshinStart.forward(max_f)
         return loss
 
-    optimizer = get_optimizer('train_dynamic', genshinStart)
+    optimizer = get_optimizer('train_velocity', genshinStart)
     for i in range(iters):
         loss = train_forward(optimizer=optimizer)
         if loss.norm() < 1e-6:
             break
         genshinStart.backward(max_f)
         optimizer.step()
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
 
 if __name__ == '__main__':
