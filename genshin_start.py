@@ -100,15 +100,15 @@ class GenshinStart(torch.nn.Module):
         static_mesh = motion_data["static_mesh_path"]
         option = {'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"],
-                  'ke': 0.55,
+                  'ke': 0.1,
                   'mu': 0.25,
-                  'transform': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                  'transform': [0.0, 0.05, 0.03, 0.0, 0.0, 0.0],
                   'linear_damping': 1.0,
                   'angular_damping': 1.0}
 
         self.physical_simulator = rigid_body_simulator(static_mesh, option) 
         self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
-        self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
+        # self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
         self.static_object_name = motion_data['neus_static_object_name']
         self.static_object_continue = motion_data['neus_static_object_continue']
@@ -316,7 +316,7 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
             loss = genshinStart.forward(max_f)
         return loss
 
-    optimizer = get_optimizer('train_velocity', genshinStart)
+    optimizer = get_optimizer('train_dynamic', genshinStart)
     for i in range(iters):
         loss = train_forward(optimizer=optimizer)
         if loss.norm() < 1e-6:
@@ -345,7 +345,7 @@ if __name__ == '__main__':
         train_velocity()
         train_dynamic()
     else:
-        train_dynamic(20, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
+        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
 
 # D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird

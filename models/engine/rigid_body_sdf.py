@@ -114,13 +114,9 @@ class rigid_body_simulator:
 
     current_frame = 0
     T = ti.Matrix.field(4, 4, dtype=ti.f32, shape=1)
-    frame_dt = 1.0 / 60.0
-    substep = 10
+    frame_dt = 1.0 / 20.0
+    substep = 20
     dt = frame_dt / substep
-
-    train_iters = 100
-    learning_rate = 0.1
-    TARGET = ti.Vector([random.random(), random.random()*0.5, random.random()], dt=ti.f32)
 
     def __init__(self, mesh_file_name, options):
         assert options is not None
@@ -296,7 +292,12 @@ class rigid_body_simulator:
             # calculate new velocity
             v_i_n = vi.dot(self.contact_normal[f]) * self.contact_normal[f]
             v_i_t = vi - v_i_n
-            vi_new = -self.ke[None] * v_i_n + (1- self.mu[None]) * v_i_t
+            v_i_n_norm = v_i_n.norm()
+            v_i_t_norm = v_i_t.norm()
+            alpha = 1.0 - (self.mu[None] * (1.0 + self.ke[None]) * (v_i_n_norm/v_i_t_norm))
+            if alpha < 0.0:
+                alpha = 0.0
+            vi_new = -self.ke[None] * alpha * v_i_t
 
             # calculate impulse
             inertial = quat_to_matrix(self.quat[f]) @ self.inertia_referance[None] @ quat_to_matrix(self.quat[f]).transpose()
@@ -429,7 +430,8 @@ class rigid_body_simulator:
                 # 4.collision responses
                 self.update_state(i)
                 ti.sync()
-            self.export_mesh(frame=i)
+                if i % 10 == 0:
+                    self.export_mesh(frame=i)
             translation = np.zeros([3],dtype=np.float32)
             quat = np.zeros([4], dtype=np.float32)
             self.get_transform(f=i, translation=translation, quat=quat)
@@ -459,6 +461,7 @@ class rigid_body_simulator:
             print('ke_grad: ', ke_grad)
             print('mu_grad: ', mu_grad)
             print("init_v_grad: ", init_v_grad)
+            import pdb; pdb.set_trace()
             return  torch.from_numpy(init_v_grad).to(self.device), \
                     torch.from_numpy(init_omega_grad).to(self.device), \
                     torch.from_numpy(ke_grad).to(self.device), \
