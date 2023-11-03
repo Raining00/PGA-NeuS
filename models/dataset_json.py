@@ -320,17 +320,11 @@ class Dataset:
             center = self.sphere_center
             radius = self.radius
         a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)  #
-        # print("running on center and radius " + str(center) + " " + str(radius))
-        # b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
-        # mid = 0.5 * (-b) / a
-        #
         b_2 = torch.sum((rays_o - center) * rays_d, dim=-1, keepdim=True)
         mid = (-b_2) / a
 
         near = mid - radius
         far = mid + radius
-        # import pdb
-        # pdb.set_trace()
         return near, far
 
     def image_at(self, idx, resolution_level):

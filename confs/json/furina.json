@@ -72,6 +72,7 @@
             ]
         ]
     },
+
     "use_qem" : true,
     "simplified_object": "./exp/bunny/wmask/meshes/00100000_s.ply"
 }

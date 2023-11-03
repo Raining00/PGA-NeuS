@@ -24,16 +24,13 @@ def extract_fields(bound_min, bound_max, resolution, query_func):
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
     return u
 
+
 def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
     print('threshold: {}'.format(threshold))
     u = extract_fields(bound_min, bound_max, resolution, query_func)
     vertices, triangles = mcubes.marching_cubes(u, threshold)
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
-    print("BB BOX::: ")
-    print(b_max_np)
-    print(b_min_np)
-    # import pdb; pdb.set_trace()
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles
 
@@ -107,7 +104,7 @@ class NeuSRenderer:
         pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # batch_size, n_samples, 3
 
         dis_to_center = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).clip(1.0, 1e10)
-        pts = torch.cat([pts / dis_to_center, 1.0 / dis_to_center], dim=-1)       # batch_size, n_samples, 4
+        pts = torch.cat([pts / dis_to_center, 1.0 / dis_to_center], dim=-1)  # batch_size, n_samples, 4
 
         dirs = rays_d[:, None, :].expand(batch_size, n_samples, 3)
 
@@ -192,7 +189,6 @@ class NeuSRenderer:
             sdf = sdf[(xx, index)].reshape(batch_size, n_samples + n_importance)
 
         return z_vals, sdf
-    
 
     def render_core(self,
                     rays_o,
@@ -232,7 +228,7 @@ class NeuSRenderer:
         # pdb.set_trace()
         sampled_color = color_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, 3)
 
-        inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
+        inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)  # Single parameter
         inv_s = inv_s.expand(batch_size * n_samples, 1)
 
         true_cos = (dirs * gradients).sum(-1, keepdim=True)
@@ -262,7 +258,7 @@ class NeuSRenderer:
         if background_alpha is not None:
             alpha = alpha * inside_sphere + background_alpha[:, :n_samples] * (1.0 - inside_sphere)
             alpha = torch.cat([alpha, background_alpha[:, n_samples:]], dim=-1)
-            sampled_color = sampled_color * inside_sphere[:, :, None] +\
+            sampled_color = sampled_color * inside_sphere[:, :, None] + \
                             background_sampled_color[:, :n_samples] * (1.0 - inside_sphere)[:, :, None]
             sampled_color = torch.cat([sampled_color, background_sampled_color[:, n_samples:]], dim=1)
 
@@ -270,7 +266,7 @@ class NeuSRenderer:
         weights_sum = weights.sum(dim=-1, keepdim=True)
 
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
-        if background_rgb is not None:    # Fixed background, usually black
+        if background_rgb is not None:  # Fixed background, usually black
             color = color + background_rgb * (1.0 - weights_sum)
 
         # Eikonal loss
@@ -290,14 +286,10 @@ class NeuSRenderer:
             'gradient_error': gradient_error,
             'inside_sphere': inside_sphere
         }
-    
-
-
 
     def render(self, rays_o, rays_d, near, far, perturb_overwrite=-1, background_rgb=None, cos_anneal_ratio=0.0):
-
         batch_size = len(rays_o)
-        sample_dist = 2.0 / self.n_samples   # Assuming the region of interest is a unit sphere
+        sample_dist = 2.0 / self.n_samples  # Assuming the region of interest is a unit sphere
         z_vals = torch.linspace(0.0, 1.0, self.n_samples)
         z_vals = near + (far - near) * z_vals[None, :]
 
@@ -339,7 +331,7 @@ class NeuSRenderer:
                                                 z_vals,
                                                 sdf,
                                                 self.n_importance // self.up_sample_steps,
-                                                64 * 2**i)
+                                                64 * 2 ** i)
                     z_vals, sdf = self.cat_z_vals(rays_o,
                                                   rays_d,
                                                   z_vals,
@@ -388,12 +380,12 @@ class NeuSRenderer:
             'gradient_error': ret_fine['gradient_error'],
             'inside_sphere': ret_fine['inside_sphere']
         }
-    
 
     # this funtion is written for dynamic rendering
     # better to use R-T transform when rendering a single ray, make easier to adapt in the future
     # rays_gt = rays ground truth [batch_size, 3], infering the ground truth RGB.
-    def render_dynamic(self, rays_o, rays_d, near, far, R, T, camera_c2w, perturb_overwrite=-1, background_rgb=None, cos_anneal_ratio=0.0):
+    def render_dynamic(self, rays_o, rays_d, near, far, R, T, camera_c2w, perturb_overwrite=-1, background_rgb=None,
+                       cos_anneal_ratio=0.0):
         # apply R to rays_d and T to rays_o, requires grad here
 
         batch_size = len(rays_o)
@@ -408,11 +400,11 @@ class NeuSRenderer:
         rotate_mat[2, 0] = 2 * (x * z - y * w)
         rotate_mat[2, 1] = 2 * (y * z + x * w)
         rotate_mat[2, 2] = 1 - 2 * (x ** 2 + y ** 2)
-        transform_matrix = torch.zeros((4,4), device=rays_o.device)
+        transform_matrix = torch.zeros((4, 4), device=rays_o.device)
         transform_matrix[0:3, 0:3] = rotate_mat
         transform_matrix[0:3, 3] = T
         transform_matrix[3, 3] = 1.0
-        transform_matrix_inv = torch.inverse(transform_matrix)   # make an inverse
+        transform_matrix_inv = torch.inverse(transform_matrix)  # make an inverse
         # rotate_mat = transform_matrix_inv[:3, :3]
         rotate_mat = torch.inverse(rotate_mat)
         T1_expand = (transform_matrix[0:3, 3]).repeat(batch_size, 1)  # expand the trans, rays_o = 
@@ -437,7 +429,6 @@ class NeuSRenderer:
             "sdf": sdf,
             "gradients": gradients
         }
-    
 
     def extract_geometry(self, bound_min, bound_max, resolution, threshold=0.0):
         return extract_geometry(bound_min,
