@@ -100,15 +100,15 @@ class GenshinStart(torch.nn.Module):
         static_mesh = motion_data["static_mesh_path"]
         option = {'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"],
-                  'ke': 0.1,
-                  'mu': 0.25,
+                  'ke': 0.0,
+                  'mu': 0.0,
                   'transform': [0.0, 0.05, 0.03, 0.0, 0.0, 0.0],
                   'linear_damping': 1.0,
                   'angular_damping': 1.0}
 
         self.physical_simulator = rigid_body_simulator(static_mesh, option) 
         self.physical_simulator.set_init_quat(np.array(motion_data['R0'], dtype=np.float32))
-        # self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
+        self.physical_simulator.set_init_translation(np.array(motion_data['T0'], dtype=np.float32))
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
         self.static_object_name = motion_data['neus_static_object_name']
         self.static_object_continue = motion_data['neus_static_object_continue']

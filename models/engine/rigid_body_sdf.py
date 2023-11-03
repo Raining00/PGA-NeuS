@@ -461,7 +461,7 @@ class rigid_body_simulator:
             print('ke_grad: ', ke_grad)
             print('mu_grad: ', mu_grad)
             print("init_v_grad: ", init_v_grad)
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
             return  torch.from_numpy(init_v_grad).to(self.device), \
                     torch.from_numpy(init_omega_grad).to(self.device), \
                     torch.from_numpy(ke_grad).to(self.device), \

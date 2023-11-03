@@ -724,7 +724,7 @@ conda activate neus
 cd D:/gitwork/NeuS
 D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny
-python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny --is_continue
+python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
+python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
 
 """
