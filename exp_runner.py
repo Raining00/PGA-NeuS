@@ -595,8 +595,8 @@ class Runner:
         return
 
     def render_novel_image_with_RTKM(self):
-        q = [0.6123724356957947, -0.35355339059327384, -0.6123724356957947, -0.35355339059327384]
-        t = [0.1000, 0.30000, 0.25]
+        q = [0.1830, -0.6830, -0.1830, -0.6830]
+        t = [0.1000, 0.40000, 0.25]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -678,8 +678,6 @@ class Runner:
         return Runner(neus_conf_path, mode="train", case=case_name, is_continue=is_continue)
 
 
-
-
 if __name__ == '__main__':
     print('Genshin Nerf, start!!!')
 
@@ -727,6 +725,6 @@ cd D:/gitwork/NeuS
 D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
-python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
+python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 
 """

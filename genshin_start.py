@@ -14,6 +14,7 @@ import time
 import math
 import trimesh
 from pathlib import Path
+import os
 
 def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False,
                             camera_params_list=None, pic_mode="png"):  # assmue load from a json file
@@ -102,9 +103,9 @@ class GenshinStart(torch.nn.Module):
                   'frame_dt': motion_data["frame_dt"],
                   'delta_frame': motion_data['delta_frame'],
                   'substep':motion_data["substep"],
-                  'kn': 0.2,
-                  'mu': 0.15,
-                  'transform': [0.1, 0.3, 0.25, -90.0, -90.0, 30.0],
+                  'kn': 0.9,
+                  'mu': 0.1,
+                  'transform': [0.1, 0.4, 0.25, -90.0, -90.0, -60.0],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
 
@@ -122,7 +123,6 @@ class GenshinStart(torch.nn.Module):
         self.runner_background = \
             Runner.get_runner(self.static_background_conf_path, self.static_background_name,
                               self.static_background_continue)
-        
         self.batch_size = motion_data["batch_size"]
         self.frame_counts = motion_data["frame_counts"]
         self.images_path = motion_data["images_path"]
@@ -142,7 +142,7 @@ class GenshinStart(torch.nn.Module):
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks,
              cameras_K, cameras_M,self.W, self.H)
-
+    
     def physical_init(self, options):
         self.substep = options['substep']
         self.frames = options['frames']
@@ -175,6 +175,21 @@ class GenshinStart(torch.nn.Module):
         self.set_init_translation(options['transform'][0:3])
         self.set_init_quaternion_from_euler(options['transform'][3:6])
 
+    def init(self):
+        with torch.no_grad():
+            self.mass = 0
+            self.inertia_referance = torch.zeros(3, 3, dtype=torch.float32)
+            mass = 1.0
+            for i in range(self.mesh.vertices.shape[0]):
+                self.mass += mass
+                r = self.x[i] - self.mass_center
+                # inertia = \sum_{i=1}^{n} m_i (r_i^T r_i I - r_i r_i^T)  https://en.wikipedia.org/wiki/List_of_moments_of_inertia
+                # as r_i is a col vector, r_i^T is a row vector, so r_i^T r_i is a scalar (actually is dot product)
+                I_i = mass * (r.dot(r) * torch.eye(3) - torch.outer(r, r))
+                self.inertia_referance += I_i
+            self.inv_mass = 1.0 / self.mass
+            print('inerita_referance:{}'.format(self.inertia_referance))
+
     def set_init_translation(self, init_translation):
         with torch.no_grad():
             self.translation[0] = torch.tensor(init_translation, dtype=torch.float32)
@@ -190,6 +205,26 @@ class GenshinStart(torch.nn.Module):
     def set_init_v(self):
         with torch.no_grad():
             self.v[0] = self.init_v
+
+    def write_out_paras(self, file_path):
+        out_dict = {}
+        out_kn = self.kn.detach().clone().cpu().numpy().tolist()
+        out_mu = self.mu.detach().clone().cpu().numpy().tolist()
+        out_r, out_t = [], []
+        for i in range(self.frames * self.substep):
+            if i % self.substep == 0:
+                out_r.append(self.translation[i // self.substep].detach().clone().cpu().numpy().tolist())
+                out_t.append(self.quaternion[i // self.substep].detach().clone().cpu().numpy().tolist())
+        out_dict['out_kn'] = out_kn
+        out_dict['out_mu'] = out_mu
+        out_dict['out_r'] = out_r
+        out_dict['out_t'] = out_t
+        dir_path = os.path.dirname(file_path)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        with open(file_path, "w") as f:
+            json.dump(out_dict, f)
+        return
 
     # the euler angle is in degree, we first conver it to radian
     def from_euler(self, euler_angle):
@@ -247,22 +282,7 @@ class GenshinStart(torch.nn.Module):
     
     def GetCrossMatrix(self, a):
         return torch.tensor([[0.0, -a[2], a[1]], [a[2], 0.0, -a[0]], [-a[1], a[0], 0.0]])
-    
-    def init(self):
-        with torch.no_grad():
-            self.mass = 0
-            self.inertia_referance = torch.zeros(3, 3, dtype=torch.float32)
-            self.v[0] = self.init_v
-            mass = 1.0
-            for i in range(self.mesh.vertices.shape[0]):
-                self.mass += mass
-                r = self.x[i] - self.mass_center
-                # inertia = \sum_{i=1}^{n} m_i (r_i^T r_i I - r_i r_i^T)  https://en.wikipedia.org/wiki/List_of_moments_of_inertia
-                # as r_i is a col vector, r_i^T is a row vector, so r_i^T r_i is a scalar (actually is dot product)
-                I_i = mass * (r.dot(r) * torch.eye(3) - torch.outer(r, r))
-                self.inertia_referance += I_i
-            self.inv_mass = 1.0 / self.mass
-            print('inerita_referance:{}'.format(self.inertia_referance))
+
 
     def physical_forward(self, f:torch.int32):
         # advect
@@ -350,7 +370,7 @@ class GenshinStart(torch.nn.Module):
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
 
-    def forward(self, max_f: int):
+    def forward(self, max_f: int, vis_folder=None):
         pbar = trange(1, max_f)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
@@ -361,10 +381,6 @@ class GenshinStart(torch.nn.Module):
             # orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
             for f in range(self.substep * (i - 1), self.substep * i):
                 self.physical_forward(f)
-            # self.translation[f + 1].requires_grad_(True)
-            # self.translation[f + 1].retain_grad()
-            # self.quaternion[f + 1].requires_grad_(True)
-            # self.quaternion[f + 1].retain_grad()
             rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
             self.rays_v_all[i]
             rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
@@ -406,11 +422,19 @@ class GenshinStart(torch.nn.Module):
                         debug_img[index][j][2] = debug_rgb[cnt][2]
                         cnt = cnt + 1
             print_blink("saving debug image at " + str(i) + " index")
-            cv.imwrite("./debug" + str(i) + ".png", debug_img)
+            if vis_folder !=None:
+                cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
             # import pdb; pdb.set_trace()
         return global_loss
-
+    
+    def export_mesh(self, f:torch.int32):
+        with torch.no_grad():
+            mat_R = self.quat_to_matrix(self.quaternion[f])
+            xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
+            faces = self.mesh.faces
+            mesh = trimesh.Trimesh(vertices=xi.clone().detach().cpu().numpy(), faces=faces)
+            mesh.export(str(Path('mesh_result') / '{}.obj'.format(f // self.substep)))
 
     def backward(self, max_f: np.int32):
         pbar = trange(1, max_f)
@@ -453,7 +477,8 @@ def get_optimizer(mode, genshinStart):
         optimizer = torch.optim.Adam(
             [
                 {'params': getattr(genshinStart, 'mu'), 'lr': 1e-2},
-                {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2}                
+                {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2},
+                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-2}
             ]
             ,
             amsgrad=False
@@ -462,20 +487,26 @@ def get_optimizer(mode, genshinStart):
     return optimizer
 
 def train_dynamic(max_f, iters, genshinStart, optimizer, device):
-    def train_forward(optimizer):
+    def train_forward(optimizer, vis_folder= None):
         optimizer.zero_grad()
+        if vis_folder  != None:
+            if not os.path.exists(vis_folder):
+                os.makedirs(vis_folder)
         loss = torch.tensor(np.nan, device=device)
         while loss.isnan():
-            loss = genshinStart.forward(max_f)
+            loss = genshinStart.forward(max_f, vis_folder)
         return loss
 
     optimizer = get_optimizer('train_dynamic', genshinStart)
     for i in range(iters):
-        loss = train_forward(optimizer=optimizer)
+        genshinStart.set_init_v()
+        loss = train_forward(optimizer=optimizer, vis_folder=Path('train_dynamic') / ('iter_' + str(i)))
         if loss.norm() < 1e-6:
             break
-        # genshinStart.backward(max_f)
         optimizer.step()
+        out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
+        genshinStart.write_out_paras(out_json_path)
+        print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
 
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
