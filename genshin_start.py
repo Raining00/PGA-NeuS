@@ -110,6 +110,8 @@ class GenshinStart(torch.nn.Module):
                   'angular_damping': 0.998}
 
         self.physical_init(options=option)
+        if 'planar_contact' in motion_data:
+            self.add_planar_contact(slope_degree=motion_data['planar_contact'][0], init_height=motion_data['planar_contact'][1])
 
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
         self.static_object_name = motion_data['neus_static_object_name']
@@ -190,6 +192,11 @@ class GenshinStart(torch.nn.Module):
             self.inv_mass = 1.0 / self.mass
             print('inerita_referance:{}'.format(self.inertia_referance))
 
+    def add_planar_contact(self, slope_degree, init_height):
+        self.c = np.cos(np.deg2rad(slope_degree))
+        self.s = np.sin(np.deg2rad(slope_degree))
+        self.init_height = init_height
+
     def set_init_translation(self, init_translation):
         with torch.no_grad():
             self.translation[0] = torch.tensor(init_translation, dtype=torch.float32)
@@ -240,7 +247,7 @@ class GenshinStart(torch.nn.Module):
         return [w, x, y, z]
 
     def quary_sdf(self, f, query_func):
-        mat_R = self.quat_to_matrix(self.quaternion[i])
+        mat_R = self.quat_to_matrix(self.quaternion[f])
         xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
         sdf, sdf_grad = query_func(xi)
         self.vertices_sdf.append(sdf)
@@ -282,13 +289,51 @@ class GenshinStart(torch.nn.Module):
     
     def GetCrossMatrix(self, a):
         return torch.tensor([[0.0, -a[2], a[1]], [a[2], 0.0, -a[0]], [-a[1], a[0], 0.0]])
+    
+    def slope_collision(self, f:torch.int32):
+        contact_normal = torch.tensor([-self.s,  self.c, 0.0 ], dtype=torch.float32)
+        mat_R = self.quat_to_matrix(self.quaternion[f])
+        xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None] + torch.tensor([2.0, 0.0, 0.0], dtype=torch.float32)
+        vi = self.v[f] + torch.cross(self.omega[f].unsqueeze(0),  torch.matmul(self.x, mat_R.t()), dim=1)
+        d = torch.einsum('bi,i->b', xi, contact_normal)
+        rel_v = torch.einsum('bi,i->b', vi, contact_normal)
+        contact_condition = (d < (-self.c * self.init_height)) & (rel_v < 0.0)
+        sum_position = torch.zeros(3, dtype=torch.float32)
+        # caculate the how many points are in contact with the plane
+        num_collision = torch.sum(contact_condition.int())
+        v_out = torch.zeros(3, dtype=torch.float32)
+        omega_out = torch.zeros(3, dtype=torch.float32)
+        if num_collision > 0:
+            contact_mask = contact_condition.float()[:, None]  # add a new axis to broadcast
+            # calculate the sum of the contact points
+            sum_position = torch.sum(self.x * contact_mask, dim=0)
+            
+            # calculate the average of the contact points
+            collision_ri = sum_position / num_collision
+            collision_Ri = mat_R @ collision_ri
+            # calculate the velocity of the contact points
+            vi = self.v[f] + self.omega[f].cross(collision_Ri)
 
+            v_i_n = vi.dot(contact_normal) * contact_normal
+            v_i_t = vi - v_i_n
+            vn_new = -self.kn * v_i_n
+            alpha = 1.0 - (self.mu * (1.0 + self.kn) * (torch.norm(v_i_n) / torch.norm(v_i_t)))
+            if alpha < 0.0:
+                alpha = 0.0
+            vt_new = alpha  * v_i_t
+            # print('f: {}, alpha:{}, vt_new:{}, vt:{}, item: vi_t_normal: {}, vi_n_normal: {}'.format(f, alpha, vt_new, v_i_t, torch.norm(v_i_t), torch.norm(v_i_n)))
+            vi_new = vn_new + vt_new
+            I = mat_R @ self.inertia_referance @ mat_R.t()
+            collision_Rri_mat = self.GetCrossMatrix(collision_Ri)
+            k = torch.tensor([[self.inv_mass, 0.0, 0.0],\
+                        [0.0, self.inv_mass, 0.0],\
+                        [0.0, 0.0, self.inv_mass]]) - collision_Rri_mat @ I.inverse() @ collision_Rri_mat
+            J = k.inverse() @ (vi_new - vi)
+            v_out = v_out + J * self.inv_mass
+            omega_out = omega_out + I.inverse() @ collision_Rri_mat @ J
+        return v_out, omega_out
 
-    def physical_forward(self, f:torch.int32):
-        # advect
-        v_out = (self.v[f] + torch.tensor([0.0, -9.8, 0.0]) * self.dt) * self.linear_damping
-        omega_out = self.omega[f] * self.angular_damping
-
+    def sdf_collision(self, f:torch.int32):
         # # collision detect
         mat_R = self.quat_to_matrix(self.quaternion[f])
         xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center
@@ -297,7 +342,8 @@ class GenshinStart(torch.nn.Module):
         vi = self.v[f] + torch.cross(self.omega[f].unsqueeze(0),  torch.matmul(self.x, mat_R.t()), dim=1)
         rel_v = torch.einsum('bi, bi->b', vi, sdf_grad)
         contact_condition = (sdf_value < 0.0) & (rel_v < 0.0)
-
+        v_out = torch.zeros(3, dtype=torch.float32)
+        omega_out = torch.zeros(3, dtype=torch.float32)
         # caculate the how many points are in contact with the plane
         num_collision = torch.sum(contact_condition.int())
         # collision response
@@ -335,6 +381,16 @@ class GenshinStart(torch.nn.Module):
             J = torch.inverse(k) @ (vi_new - vi)
             v_out = v_out + J * self.inv_mass
             omega_out = omega_out + inertial_inv @ collision_Rri_mat @ J
+        return v_out, omega_out
+
+    def physical_forward(self, f:torch.int32):
+        # advect
+        v_out = (self.v[f] + torch.tensor([0.0, -9.8, 0.0]) * self.dt) * self.linear_damping
+        omega_out = self.omega[f] * self.angular_damping
+        # v_out_, omega_out_ = self.sdf_collision(f=f)
+        v_out_, omega_out_ = self.slope_collision(f=f)
+        v_out = v_out_ + v_out_
+        omega_out = omega_out + omega_out_
         # J = F · Δt = m · Δv,  F = m · Δv / Δt = J / Δt
         # torque = r × F = r × (J / Δt) = (r × J) / Δt
         # Δω = I^(-1) · torque · Δt = I^(-1) · (r × J) / Δt · Δt = I^(-1) · (r × J)
@@ -346,8 +402,6 @@ class GenshinStart(torch.nn.Module):
         self.v[f + 1] = v_out
         quat_new = self.quaternion[f] + dq
         self.quaternion[f + 1] = quat_new / torch.norm(quat_new)
-
-        # return self.translation[f + 1], self.quaternion[f + 1]
 
     def get_transform_matrix(self, translation, quaternion):
         w, x, y, z = quaternion
