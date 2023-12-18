@@ -1,0 +1,71 @@
+{
+    "device": "cuda:0",
+    "static_background_path": "",
+    "static_mesh_path": "./exp/bunny_original/wmask/meshes/00200000.obj",
+    "neus_object_conf_path": "./confs/wmask_blender_bunny.conf",
+    "neus_static_object_name": "bunny_original",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/wmask_blender_obstacle.conf",
+    "neus_static_background_name": "slope",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 20,
+    "substep": 10, 
+    "frame_dt": 0.0166667,
+    "delta_frame": 3, 
+    "images_path": "./public_data/bunny_original/motion/image",
+    "masks_path": "./public_data/bunny_original/motion/mask",
+    "cameras_setting_path": "./confs/json/fixed_camera_setting.json",
+    "image_type": "png",
+    "R0": [0.6123724356957947, -0.35355339059327384, -0.6123724356957947, -0.35355339059327384],
+    "T0": [0.1000, 0.30000, 0.25],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M": [
+            [
+                1.0,
+                -0.0,
+                -0.0,
+                -0.10000000149011612
+            ],
+            [
+                0.0,
+                -0.9929816722869873,
+                0.1182689294219017,
+                0.09290292859077454
+            ],
+            [
+                0.0,
+                -0.1182689294219017,
+                -0.992981493473053,
+                1.11918306350708
+            ],
+            [
+                0.0,
+                -0.0,
+                -0.0,
+                1.0
+            ]
+        ],
+        "K": [
+            [
+                1111.1110311937682,
+                0.0,
+                400.0
+            ],
+            [
+                0.0,
+                1111.1110311937682,
+                300.0
+            ],
+            [
+                0.0,
+                0.0,
+                1.0
+            ]
+        ]
+    },
+
+    "use_qem" : true,
+    "simplified_object": "./exp/bunny/wmask/meshes/00100000_s.ply"
+}

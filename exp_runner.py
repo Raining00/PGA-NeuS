@@ -273,6 +273,7 @@ class Runner:
 
         out_rgb_fine = []
         out_normal_fine = []
+        depth_fine = []
 
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
@@ -297,6 +298,8 @@ class Runner:
                     normals = normals * render_out['inside_sphere'][..., None]
                 normals = normals.sum(dim=1).detach().cpu().numpy()
                 out_normal_fine.append(normals)
+            if feasible('depth_fine'):
+                depth_fine.append(render_out['depth_fine'].detach().cpu().numpy())
             del render_out
 
         img_fine = None
@@ -310,6 +313,9 @@ class Runner:
             normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None])
                           .reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
 
+        if len(depth_fine) > 0:
+            depth_fine = (np.concatenate(depth_fine, axis=0).reshape([H, W, -1]) * 256).clip(0, 255).astype(np.uint8)
+
         os.makedirs(os.path.join(self.base_exp_dir, 'validations_fine'), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, 'normals'), exist_ok=True)
 
@@ -320,6 +326,11 @@ class Runner:
                                         '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
                            np.concatenate([img_fine[..., i],
                                            self.dataset.image_at(idx, resolution_level=resolution_level)]))
+            if len(depth_map) > 0:
+                cv.imwrite(os.path.join(self.base_exp_dir,
+                                        'validations_fine',
+                                        '{:0>8d}_{}_{}_depth.png'.format(self.iter_step, i, idx)),
+                           depth_fine[..., i])
             if len(out_normal_fine) > 0:
                 cv.imwrite(os.path.join(self.base_exp_dir,
                                         'normals',
@@ -561,9 +572,17 @@ class Runner:
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
             del render_out
 
+        print(translation.grad.shape)
+
+        # img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
+        #     [image_rgb.shape[0], image_rgb.shape[1], 3]) * 256).clip(0, 255).astype(np.uint8)
+        # cv.imwrite('dynamic_train.png', img_fine)
+        print_ok('dynamic train has done!')
+        return
+
     def render_novel_image_with_RTKM(self):
-        q = [1, 0, 0, -0]
-        t = [0.000, 0.0000, 0.10]
+        q = [0.1830, -0.6830, -0.1830, -0.6830]
+        t = [0.1000, 0.40000, 0.25]
 
         w, x, y, z = q
         rotate_mat = np.array([
@@ -577,13 +596,51 @@ class Runner:
         transform_matrix[3, 3] = 1.0
         inverse_matrix = np.linalg.inv(transform_matrix)
         original_mat = np.array(
-            [[0.99913844, - 0.02643227, - 0.03199565,  0.03332534],
-            [0.03194597, - 0.00229971,  0.99948695, - 0.22578363],
-            [-0.02649229, - 0.99964796, - 0.00145332, 0.07182068],
-            [0.,          0.,          0.,          1.]]
+            [
+                [
+                    1.0,
+                    -0.0,
+                    -0.0,
+                    -0.10000000149011612
+                ],
+                [
+                    0.0,
+                    -0.9929816722869873,
+                    0.1182689294219017,
+                    0.09290292859077454
+                ],
+                [
+                    0.0,
+                    -0.1182689294219017,
+                    -0.992981493473053,
+                    1.11918306350708
+                ],
+                [
+                    0.0,
+                    -0.0,
+                    -0.0,
+                    1.0
+                ]
+            ]
         )
         intrinsic_mat = np.array(
-            [[196.04002654133333, 0, 256.14846416266664], [0, 195.57227938666668, 147.136028024], [0, 0, 1]]
+            [
+        [
+            1111.1110311937682,
+            0.0,
+            400.0
+        ],
+        [
+            0.0,
+            1111.1110311937682,
+            300.0
+        ],
+        [
+            0.0,
+            0.0,
+            1.0
+        ]
+            ]
         )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         # original_mat = np.eye(4)
@@ -591,8 +648,8 @@ class Runner:
         # original_mat[3, 3] = 0.2
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
-        self.dataset.W = 512
-        self.dataset.H = 288
+        self.dataset.W = 800
+        self.dataset.H = 600
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
         img = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
         # img loss
@@ -631,52 +688,29 @@ if __name__ == '__main__':
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'validate_mesh':
-        runner.validate_mesh(world_space=False, resolution=512, threshold=args.mcube_threshold)
+        runner.validate_mesh(world_space=False, resolution=128, threshold=args.mcube_threshold)
+    elif args.mode == 'render_at':
+        runner.save_render_pic_at(args.render_at_pose_path)
+    elif args.mode == 'validate_image':
+        runner.validate_image()
+    elif args.mode == 'render_motion':
+        runner.render_motion(args.render_at_pose_path)
+    elif args.mode == 'train_dynamic':
+        runner.train_dynamic_single_frame(args.render_at_pose_path)
+    elif args.mode == 'render_rtkm':
+        runner.render_novel_image_with_RTKM()
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
         img_idx_1 = int(img_idx_1)
         runner.interpolate_view(img_idx_0, img_idx_1)
-    elif args.mode == 'render_rtkm':
-        runner.render_novel_image_with_RTKM()
 
 """
 conda activate neus
 cd D:/gitwork/NeuS
-D:
-python exp_runner.py --mode render_at --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/test_render.json
-
-
-python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
-python exp_runner.py --mode render_motion --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/transform.json
-
-python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
-python exp_runner.py --mode validate_mesh --conf ./confs/wmask.conf --case bird --is_continue
-
-python exp_runner.py --mode train --conf ./confs/womask.conf --case bird_ss --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js.conf --case sim_ball --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk.conf --case r_bk --is_continue
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single.conf --case real_world_normal --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single.conf --case real_world_normal
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_sparse.conf --case real_world_sparse
-python exp_runner.py --mode train --conf ./confs/womask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case real_world_multi_qrs
-
-python exp_runner.py --mode train --conf ./confs/wmask_single_blender.conf --case blender_static_test
-python exp_runner.py --mode train --conf ./confs/wmask_single_blender.conf --case blender_high_res
-python exp_runner.py --mode train --conf ./confs/womask_blender_high_res.conf --case blender_high_res
-
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_object
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_obstacle --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_object2 
-
-python exp_runner.py --mode debug --conf ./confs/wmask_js_bk_single_multi_qrs.conf --case rws_obstacle --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj2.conf --case rws_object3
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj4.conf --case rws_obj4
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5
-
-python exp_runner.py --mode render_rtkm --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case rws_obj5 --is_continue
-python exp_runner.py --mode validate_mesh --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case duck_3d --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_js_bk_single_multi_qrs_obj5.conf --case duck_3d_dense 
+D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
+python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
+python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
+python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 
 """
