@@ -326,7 +326,7 @@ class Runner:
                                         '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
                            np.concatenate([img_fine[..., i],
                                            self.dataset.image_at(idx, resolution_level=resolution_level)]))
-            if len(depth_map) > 0:
+            if len(depth_fine) > 0:
                 cv.imwrite(os.path.join(self.base_exp_dir,
                                         'validations_fine',
                                         '{:0>8d}_{}_{}_depth.png'.format(self.iter_step, i, idx)),
