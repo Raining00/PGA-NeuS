@@ -12,10 +12,10 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
-from models.dataset_json import Dataset
+from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
-from models.rigid_body import rigid_body_simulator
+
 
 
 def print_error(*message):
@@ -130,7 +130,7 @@ class Runner:
 
             background_rgb = None
             if self.use_white_bkgd:
-                background_rgb = torch.ones([1, 3])
+                background_rgb = torch.zeros([1, 3])
 
             if self.mask_weight > 0.0:
                 mask = (mask > 0.5).float()
@@ -277,7 +277,7 @@ class Runner:
 
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
 
             render_out = self.renderer.render(rays_o_batch,
                                               rays_d_batch,
@@ -349,7 +349,7 @@ class Runner:
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
 
             render_out = self.renderer.render(rays_o_batch,
                                               rays_d_batch,
@@ -375,7 +375,7 @@ class Runner:
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
 
             render_out = self.renderer.render(rays_o_batch,
                                               rays_d_batch,
@@ -487,103 +487,9 @@ class Runner:
 
         print_ok(f"{frames} images has been rendered!")
 
-    def train_dynamic_single_frame(self, setting_json_path):
-        with open(setting_json_path, "r") as json_file:
-            motion_data = json.load(json_file)
-        static_mesh = motion_data["static_mesh_path"]
-
-        optimizer = torch.optim.Adam(
-            [
-                #  {'params':pnerf.nerf.density.parameters(), 'lr': 1e-1}
-            ],
-            amsgrad=False
-        )
-
-        # in the future, it need to be replaced as a set of camera poses from real-world data
-        original_mat = motion_data["camera_poses_mat"]
-        if original_mat is None:
-            print_error("static camera information must be provided")
-            original_mat = np.eye((4, 4))
-            original_mat[2, 3] = -5
-        else:
-            original_mat = np.array(original_mat)
-
-        option = {'frames': 2,
-                  'ke': 0.1,
-                  'mu': 0.8,
-                  'transform': [0.0, 0.0, 0.9985088109970093, 0.0, 0.0, 0.0],
-                  'linear_damping': 0.999,
-                  'angular_damping': 0.998}
-        dynamic_observation = rigid_body_simulator(static_mesh, option)
-        dynamic_observation.set_init_quat(
-            np.array([0.9515485167503357, 0.14487811923027039, 0.2685358226299286, 0.03813457489013672]))
-        dynamic_observation.set_init_translation(np.array([0.0, 0.0, 0.9985088109970093]))
-        dynamic_observation.clear()
-        translation, quat = dynamic_observation.forward()
-
-        ## TODO: the following code needs to be batchfied as :
-        # for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
-        #     break
-        # load the ground truth img
-        # use cv2.IMREAD_COLOR to read image
-        image = cv.imread('./dynamic_test/transform0001.png')
-        image_mask = cv.imread('./dynamic_test/transform0001_mask.png')
-        resolution_level = 1
-        image_rgb = image / 256.0
-        image_mask = (np.array(image_mask) / 255.0)
-        # image_rgb = (cv.resize(image_rgb,
-        #                        (image_rgb.shape[0] // resolution_level, image_rgb.shape[1] // resolution_level))).clip(
-        #     0, 255)  # W, H, 3
-
-        image_rgb = torch.from_numpy((image_rgb).astype(np.float32)).to(self.device)
-
-        if image_mask is None:
-            rays_mask = torch.ones_like(image_rgb.reshape(-1, 3))
-        else:
-            rays_mask = torch.from_numpy(np.where(image_mask > 0, 1, 0)).to(self.device).bool()
-        self.dataset.set_image_w_h(image_rgb.shape[1], image_rgb.shape[0])  # change W & H here, index 1 is W, 0 is H
-        rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(original_mat,
-                                                           resolution_level=resolution_level)  # the shape here is H, W, 3
-        # import pdb
-        # pdb.set_trace()
-        rays_o = rays_o[rays_mask].reshape(-1, 3).split(self.batch_size)
-        rays_d = rays_d[rays_mask].reshape(-1, 3).split(self.batch_size)  # similar as pacnerf, cut down the rays
-        rays_gt = image_rgb[rays_mask].reshape(-1, 3).split(self.batch_size)
-
-        # now in batch, (H*W-mask_0)/batch, 3
-        translation.requires_grad_(True)
-        quat.requires_grad_(True)
-        out_rgb_fine, color_fine_loss = [], None
-        for rays_o_batch, rays_d_batch, rays_gt_batch, rays_mask_batch in zip(rays_o, rays_d, rays_gt, rays_mask):
-            near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
-            # this render out contains grad & img loss, find out its reaction with phy simualtion
-            render_out = self.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch, near=near, far=far,
-                                                      T=translation, R=quat
-                                                      , cos_anneal_ratio=self.get_cos_anneal_ratio(),
-                                                      background_rgb=background_rgb)
-            color_fine = render_out["color_fine"]
-            color_error = (color_fine - rays_gt_batch)
-            mask_sum = self.batch_size
-            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
-                                        reduction='sum') / mask_sum  # normalize
-            color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
-            # print_info(f'translation_grad:{T_grad}, rotation_grad: {R_grad}')
-            out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
-            del render_out
-
-        print(translation.grad.shape)
-
-        # img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
-        #     [image_rgb.shape[0], image_rgb.shape[1], 3]) * 256).clip(0, 255).astype(np.uint8)
-        # cv.imwrite('dynamic_train.png', img_fine)
-        print_ok('dynamic train has done!')
-        return
-
     def render_novel_image_with_RTKM(self):
-        q = [0.1830, -0.6830, -0.1830, -0.6830]
-        t = [0.1000, 0.40000, 0.25]
-
+        q = [0.8298788601356224, -0.3148134294652406, -0.013172211662571529, 0.4604563730392552]
+        t = [0.11804556, -0.05734831, 0.37365847]
         w, x, y, z = q
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -594,53 +500,26 @@ class Runner:
         transform_matrix[0:3, 0:3] = rotate_mat
         transform_matrix[0:3, 3] = t
         transform_matrix[3, 3] = 1.0
+    #     transform_matrix = np.array(
+    #         [[ 0.57561284, -0.75595245, -0.31177838,  0.11804556],
+    #          [ 0.77253959,  0.37774483,  0.51038357, -0.05734831],
+    #          [-0.26805302, -0.53464447,  0.80143802,  0.37365847],
+    #          [ 0.,          0.,          0.,          1.        ]]
+    #    )
         inverse_matrix = np.linalg.inv(transform_matrix)
         original_mat = np.array(
-            [
-                [
-                    1.0,
-                    -0.0,
-                    -0.0,
-                    -0.10000000149011612
-                ],
-                [
-                    0.0,
-                    -0.9929816722869873,
-                    0.1182689294219017,
-                    0.09290292859077454
-                ],
-                [
-                    0.0,
-                    -0.1182689294219017,
-                    -0.992981493473053,
-                    1.11918306350708
-                ],
-                [
-                    0.0,
-                    -0.0,
-                    -0.0,
-                    1.0
-                ]
-            ]
-        )
+           [[-0.9630855,   0.16514869, -0.21258466,  0.25058863],
+            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
+            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
+            [ 0.,          0.,          0.,          1.,        ]]
+       )
+        
         intrinsic_mat = np.array(
-            [
-        [
-            1111.1110311937682,
-            0.0,
-            400.0
-        ],
-        [
-            0.0,
-            1111.1110311937682,
-            300.0
-        ],
-        [
-            0.0,
-            0.0,
-            1.0
-        ]
-            ]
+
+       [[ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02,  0.00000000e+00],
+        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02,  0.00000000e+00],
+        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
+        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
         )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         # original_mat = np.eye(4)
@@ -648,8 +527,8 @@ class Runner:
         # original_mat[3, 3] = 0.2
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
-        self.dataset.W = 800
-        self.dataset.H = 600
+        self.dataset.W = 1920
+        self.dataset.H = 1080
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
         img = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
         # img loss
@@ -682,7 +561,7 @@ if __name__ == '__main__':
     parser.add_argument('--case', type=str, default='')
 
     args = parser.parse_args()
-
+    torch.cuda.set_device(args.gpu) 
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
 
     if args.mode == 'train':
@@ -712,5 +591,7 @@ D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bir
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case soap2 --is_continue
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 7
 
 """

@@ -30,7 +30,7 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
 
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
     for i in range(1, frames_count + 1):
-        picture_name = f"{i:04}"
+        picture_name = f"{i:03}"
         image_I_path = images_path + "/" + picture_name + "." + pic_mode
         image = cv.imread(image_I_path)
         images.append(np.array(image))
@@ -122,9 +122,8 @@ class GenshinStart(torch.nn.Module):
         self.static_background_continue = motion_data['neus_static_background_continue']
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue)
-        self.runner_background = \
-            Runner.get_runner(self.static_background_conf_path, self.static_background_name,
-                              self.static_background_continue)
+        # self.runner_background = \
+        #     Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
         self.batch_size = motion_data["batch_size"]
         self.frame_counts = motion_data["frame_counts"]
         self.images_path = motion_data["images_path"]
@@ -153,6 +152,8 @@ class GenshinStart(torch.nn.Module):
         print('mass_center:{}'.format(self.mesh.center_mass))
         # convert vertices to numpy array
         vertices = np.array(self.mesh.vertices) - self.mesh.center_mass
+        self.raw_translation = torch.tensor([0, 0, 0], dtype=torch.float32, requires_grad=True) # this para is raw as it is just detected by a qr code, not precise
+        self.raw_quaternion = torch.tensor([1, 0, 0, 0], dtype=torch.float32, requires_grad=True) # 
         self.translation = []
         self.quaternion = []
         self.v = []
@@ -173,11 +174,6 @@ class GenshinStart(torch.nn.Module):
         self.mass = torch.tensor([0.0], dtype=torch.float32)
         self.inv_mass = torch.tensor([0.0], dtype=torch.float32)
         self.target = torch.tensor([0.0, 0.0, 5.0], dtype=torch.float32)
-        self.init()
-        self.set_init_translation(options['transform'][0:3])
-        self.set_init_quaternion_from_euler(options['transform'][3:6])
-
-    def init(self):
         with torch.no_grad():
             self.mass = 0
             self.inertia_referance = torch.zeros(3, 3, dtype=torch.float32)
@@ -190,7 +186,8 @@ class GenshinStart(torch.nn.Module):
                 I_i = mass * (r.dot(r) * torch.eye(3) - torch.outer(r, r))
                 self.inertia_referance += I_i
             self.inv_mass = 1.0 / self.mass
-            print('inerita_referance:{}'.format(self.inertia_referance))
+        self.set_init_translation(options['transform'][0:3])
+        self.set_init_quaternion_from_euler(options['transform'][3:6])
 
     def add_planar_contact(self, slope_degree, init_height):
         self.c = np.cos(np.deg2rad(slope_degree))
@@ -246,7 +243,7 @@ class GenshinStart(torch.nn.Module):
         z = math.cos(phi) * math.cos(theta) * math.sin(psi) - math.sin(phi) * math.sin(theta) * math.cos(psi)
         return [w, x, y, z]
 
-    def quary_sdf(self, f, query_func):
+    def query_sdf(self, f, query_func):
         mat_R = self.quat_to_matrix(self.quaternion[f])
         xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
         sdf, sdf_grad = query_func(xi)
@@ -420,6 +417,7 @@ class GenshinStart(torch.nn.Module):
 
     def query_sdf(self, pts: torch.Tensor):
         # sdf = sdf_query_func(pts)
+        return None, None
         sdf = self.runner_background.sdf_network.sdf(pts).contiguous()
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
@@ -511,7 +509,51 @@ class GenshinStart(torch.nn.Module):
                 self.init_mu.backward(retain_graph=True, gradient=mu_grad)
                 self.init_translation.backward(retain_graph=True, gradient=translation_grad)
                 self.init_quaternion.backward(retain_graph=True, gradient=quaternion_grad)
-
+        return
+    
+    def refine_RT(self, vis_folder=None, iter_id=-1):
+        # this function is used to refine RT to fit the initial dynamic scene (as frame 0)
+        global_loss = 0
+        orgin_mat_c2w = torch.from_numpy(self.cameras_M[0].astype(np.float32)).to(self.device)
+        rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[0], self.rays_mask_all[0], self.rays_o_all[0], self.rays_v_all[0]
+        rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
+            rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
+        rays_sum = len(rays_o)
+        debug_rgb = []
+        for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size), rays_d.split(self.batch_size), rays_gt.split(self.batch_size)):
+            near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+            background_rgb = None
+            render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                    near=near, far=far, R=self.raw_quaternion, T=self.raw_translation,
+                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                    background_rgb=background_rgb)    
+            color_fine = render_out["color_fine"]
+            color_error = (color_fine - rays_gt_batch)
+            debug_rgb.append(color_fine.clone().detach().cpu().numpy())
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),reduction='sum') / rays_sum  # normalize
+            global_loss += color_fine_loss.clone().detach()
+            color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
+            # print("grad for raw R T : ", self.raw_quaternion.grad, self.raw_quaternion.grad)
+            # print("color fine loss ", color_fine_loss)
+            torch.cuda.synchronize()
+            del render_out
+        ### img_debug should has same shape as rays_gt
+        debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
+        W, H, cnt = self.W, self.H, 0
+        rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
+        debug_img = np.zeros_like(rays_mask).astype(np.float32)
+        for index in range(0, H):
+            for j in range(0, W):
+                if rays_mask[index][j][0]:
+                    debug_img[index][j][0] = debug_rgb[cnt][0]
+                    debug_img[index][j][1] = debug_rgb[cnt][1]
+                    debug_img[index][j][2] = debug_rgb[cnt][2]
+                    cnt = cnt + 1
+        print_blink("saving debug image at " + str(iter_id) + " index")
+        if vis_folder !=None:
+            cv.imwrite((vis_folder / (str(iter_id) + ".png")).as_posix(), debug_img)
+        return global_loss
 
 def get_optimizer(mode, genshinStart):
     optimizer = None
@@ -537,16 +579,25 @@ def get_optimizer(mode, genshinStart):
             ,
             amsgrad=False
         )
-
+    elif mode == "refine_rt":
+        optimizer = torch.optim.Adam(
+            [
+                {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-4},
+                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-4},
+            ]
+            ,
+            amsgrad=False
+        )
     return optimizer
 
-def train_dynamic(max_f, iters, genshinStart, optimizer, device):
+
+def train_dynamic(max_f, iters, genshinStart):
     def train_forward(optimizer, vis_folder= None):
         optimizer.zero_grad()
         if vis_folder  != None:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
-        loss = torch.tensor(np.nan, device=device)
+        loss = torch.tensor(np.nan)
         while loss.isnan():
             loss = genshinStart.forward(max_f, vis_folder)
         return loss
@@ -561,6 +612,35 @@ def train_dynamic(max_f, iters, genshinStart, optimizer, device):
         out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
         print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
+        
+        
+have_inited = False
+def refine_RT(genshinStart, iters=1000, init_R=None, init_T=None, require_init=False):
+    def refine_rt_forward(optimizer, vis_folder= None, iter_id=-1):
+        optimizer.zero_grad()
+        if vis_folder != None:
+            if not os.path.exists(vis_folder):
+                os.makedirs(vis_folder)
+        loss = genshinStart.refine_RT(vis_folder=vis_folder, iter_id=iter_id)
+
+        return loss    
+    if require_init: # not set init rt for the first loop, need init
+            if init_R is None or init_T is None:
+                init_R, init_T = [], []  # should be len(4) and len(3) array 
+    optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
+    genshinStart.raw_translation, genshinStart.raw_quaternion = init_T, init_R
+
+    optimizer = get_optimizer('refine_rt', genshinStart)
+    for i in range(iters):
+        genshinStart.set_init_v()
+        loss = refine_rt_forward(optimizer=optimizer, vis_folder=Path('refine_rt'), iter_id=i)
+        if loss.norm() < 1e-3:
+            break
+        optimizer.step()
+        out_json_path = "./refine_rt/out_jsons/" + str(i) + ".json"
+        genshinStart.write_out_paras(out_json_path)
+        print('raw_translation: {}, raw_quaternion: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion))
+    return
 
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
@@ -570,16 +650,23 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
     parser = ArgumentParser()
-    parser.add_argument('--conf', type=str, default='./dynamic_test/base.json')
+    parser.add_argument('--conf', type=str, default='./confs/json/base.json')
     parser.add_argument('--mode', type=str, default='train')
+    parser.add_argument('--gpu', type=int, default=0)
+    
     args = parser.parse_args()
+    torch.cuda.set_device(args.gpu) 
     genshinStart = GenshinStart(args.conf)
     optimizer = get_optimizer('train_dynamic', genshinStart=genshinStart)
     if args.mode == "train":
         train_dynamic()
+    elif args.mode == "refine_rt":
+        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
+        refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T)
     else:
-        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, optimizer=optimizer, device='cuda:0')
+        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart)
 
 # D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./confs/json/furina.json
+# python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json

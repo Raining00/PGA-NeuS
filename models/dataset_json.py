@@ -86,19 +86,14 @@ class Dataset:
         self.H, self.W = self.images.shape[1], self.images.shape[2]
         self.image_pixels = self.H * self.W
 
-        # Object scale mat: region of interest to **extract mes-h**
-<<<<<<< HEAD
         object_bbox_min = np.array([-1.0, -01.2, -01.005])
         object_bbox_max = np.array([01.2, 01.0, 01.13])
-=======
         if conf.get_bool('with_bbox') is True:
             object_bbox_min = np.array(conf.get('bbox_min'))
             object_bbox_max = np.array(conf.get('bbox_max'))           
         else:
             object_bbox_min = np.array([-0.3, -0.3, 0.1])
             object_bbox_max = np.array([0.1, 0.1, 0.5])
-            
->>>>>>> c14e909afaa215ca21c0779e55f2c453587d2f2d
         self.object_bbox_min = object_bbox_min
         self.object_bbox_max = object_bbox_max
         if conf.get_bool('with_sphere'):  # TODO: need to reset here
