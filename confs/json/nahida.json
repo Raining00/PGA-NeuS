@@ -1,5 +1,5 @@
 {
-    "device": "cuda:0",
+    "device": "cuda",
     "static_background_path": "",
     "static_mesh_path": "./exp/soap2_merge/womask_white/meshes/soap_merge.obj",
     "neus_object_conf_path": "./confs/thin_structure_white_bkgd.conf",

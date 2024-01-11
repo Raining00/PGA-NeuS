@@ -511,11 +511,11 @@ class GenshinStart(torch.nn.Module):
                 self.init_quaternion.backward(retain_graph=True, gradient=quaternion_grad)
         return
     
-    def refine_RT(self, vis_folder=None, iter_id=-1):
+    def refine_RT(self, target_image_id = 0, vis_folder=None, iter_id=-1, write_out_result=True):
         # this function is used to refine RT to fit the initial dynamic scene (as frame 0)
         global_loss = 0
-        orgin_mat_c2w = torch.from_numpy(self.cameras_M[0].astype(np.float32)).to(self.device)
-        rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[0], self.rays_mask_all[0], self.rays_o_all[0], self.rays_v_all[0]
+        orgin_mat_c2w = torch.from_numpy(self.cameras_M[target_image_id].astype(np.float32)).to(self.device)
+        rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[target_image_id], self.rays_mask_all[target_image_id], self.rays_o_all[target_image_id], self.rays_v_all[target_image_id]
         rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
             rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
         rays_sum = len(rays_o)
@@ -550,11 +550,20 @@ class GenshinStart(torch.nn.Module):
                     debug_img[index][j][1] = debug_rgb[cnt][1]
                     debug_img[index][j][2] = debug_rgb[cnt][2]
                     cnt = cnt + 1
-        print_blink("saving debug image at " + str(iter_id) + " index")
-        if vis_folder !=None:
-            cv.imwrite((vis_folder / (str(iter_id) + ".png")).as_posix(), debug_img)
+        print_blink("saving debug image at " + str(iter_id) + " index, with image id " + str(target_image_id))
+        if vis_folder !=None and write_out_result:
+            cv.imwrite((vis_folder / (str(iter_id) + "_" + str(target_image_id) + ".png")).as_posix(), debug_img)
         return global_loss
-
+    
+    """this function is used to call refine_RT function for calculating a set of RT in dynamic video sequence"""
+    def refine_RT_seqnuece(self, vis_folder=None, iter_id=-1, write_out_result=True):
+        
+        return
+    
+    # TODO: Finish new loss calculation setting
+    # TODO: Finish a full sequenece rendering fucntion
+    
+        
 def get_optimizer(mode, genshinStart):
     optimizer = None
     if mode == "train_static":
@@ -615,7 +624,7 @@ def train_dynamic(max_f, iters, genshinStart):
         
         
 have_inited = False
-def refine_RT(genshinStart, iters=1000, init_R=None, init_T=None, require_init=False):
+def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=False):
     def refine_rt_forward(optimizer, vis_folder= None, iter_id=-1):
         optimizer.zero_grad()
         if vis_folder != None:
@@ -663,11 +672,14 @@ if __name__ == '__main__':
     elif args.mode == "refine_rt":
         init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T)
+    elif args.mode == "refine_rt_sequence":
+        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
+        refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T)
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart)
 
 # D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./confs/json/furina.json
-# python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json
-# python genshin_start.py --mode debug --conf ./confs/json/nahida.json
+# python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
+# python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
