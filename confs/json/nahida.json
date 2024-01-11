@@ -1,7 +1,7 @@
 {
     "device": "cuda:0",
     "static_background_path": "",
-    "static_mesh_path": "./exp/soap2_merge/womask_white/meshes/00300000.obj",
+    "static_mesh_path": "./exp/soap2_merge/womask_white/meshes/soap_merge.obj",
     "neus_object_conf_path": "./confs/thin_structure_white_bkgd.conf",
     "neus_static_object_name": "soap2_merge",
     "neus_static_object_continue": true,
@@ -9,15 +9,15 @@
     "neus_static_background_name": "scene1",
     "neus_static_background_continue": true,
     "batch_size": 512,
-    "frame_counts": 20,
+    "frame_counts": 21,
     "substep": 10, 
     "frame_dt": 0.0166667,
     "delta_frame": 3, 
     "images_path": "./public_data/soap_dynamic1/image",
     "masks_path": "./public_data/soap_dynamic1/mask",
     "image_type": "png",
-    "R0": [0.8298788601356224, -0.3148134294652406, -0.013172211662571529, 0.4604563730392552],
-    "T0": [0.11804556, -0.05734831, 0.37365847],
+    "R0": [1.1429, -0.4620, -0.1406,  0.3264],
+    "T0": [0.1520, -0.1390,  0.3170],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
         "M": [

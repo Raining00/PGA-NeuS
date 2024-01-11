@@ -52,9 +52,9 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
 
 def generate_rays_with_K_and_M(transform_matrix, intrinsic_mat, W, H,
                                resolution_level=1):  # transform mat should be c2w mat
-    transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to('cuda:0')  # add to cuda
+    transform_matrix = torch.from_numpy(transform_matrix.astype(np.float32)).to('cuda')  # add to cuda
     intrinsic_mat_inv = np.linalg.inv(intrinsic_mat)
-    intrinsic_mat_inv = torch.from_numpy(intrinsic_mat_inv.astype(np.float32)).to('cuda:0')
+    intrinsic_mat_inv = torch.from_numpy(intrinsic_mat_inv.astype(np.float32)).to('cuda')
     tx = torch.linspace(0, W - 1, W // resolution_level)
     ty = torch.linspace(0, H - 1, H // resolution_level)
     pixels_x, pixels_y = torch.meshgrid(tx, ty)
@@ -76,10 +76,10 @@ def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
         rays_gt, rays_mask = imgs[i], masks[i]  ## check if is  H, W, 3
         rays_gt = rays_gt / 256.0
         rays_gt = rays_gt.reshape(-1, 3)
-        rays_gt = torch.from_numpy(rays_gt.astype(np.float32)).to("cuda:0")
+        rays_gt = torch.from_numpy(rays_gt.astype(np.float32)).to("cuda")
         rays_mask = rays_mask / 255.0
         rays_mask = np.where(rays_mask > 0, 1, 0).reshape(-1, 3)
-        rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda:0")
+        rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda")
         rays_o, rays_v = generate_rays_with_K_and_M(cameras_c2w[i], cameras_K[i], W_all, H_all)  ## check if is  H, W, 3
         rays_o = rays_o.reshape(-1, 3)
         rays_v = rays_v.reshape(-1, 3)
@@ -103,9 +103,10 @@ class GenshinStart(torch.nn.Module):
                   'frame_dt': motion_data["frame_dt"],
                   'delta_frame': motion_data['delta_frame'],
                   'substep':motion_data["substep"],
-                  'kn': 0.9,
-                  'mu': 0.1,
-                  'transform': [0.1, 0.4, 0.25, -90.0, -90.0, -60.0],
+                  'kn': 0.6,
+                  'mu': 0.2,
+                  'translation': motion_data['T0'],
+                  'quaterion': motion_data['R0'],
                   'linear_damping': 0.999,
                   'angular_damping': 0.998}
 
@@ -122,8 +123,8 @@ class GenshinStart(torch.nn.Module):
         self.static_background_continue = motion_data['neus_static_background_continue']
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue)
-        # self.runner_background = \
-        #     Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
+        self.runner_background = \
+            Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
         self.batch_size = motion_data["batch_size"]
         self.frame_counts = motion_data["frame_counts"]
         self.images_path = motion_data["images_path"]
@@ -186,8 +187,9 @@ class GenshinStart(torch.nn.Module):
                 I_i = mass * (r.dot(r) * torch.eye(3) - torch.outer(r, r))
                 self.inertia_referance += I_i
             self.inv_mass = 1.0 / self.mass
-        self.set_init_translation(options['transform'][0:3])
-        self.set_init_quaternion_from_euler(options['transform'][3:6])
+        self.set_init_translation(options['translation'])
+        # self.set_init_quaternion_from_euler(options['transform'][3:6])
+        self.set_init_quaternion(options['quaterion'])
 
     def add_planar_contact(self, slope_degree, init_height):
         self.c = np.cos(np.deg2rad(slope_degree))
@@ -243,12 +245,10 @@ class GenshinStart(torch.nn.Module):
         z = math.cos(phi) * math.cos(theta) * math.sin(psi) - math.sin(phi) * math.sin(theta) * math.cos(psi)
         return [w, x, y, z]
 
-    def query_sdf(self, f, query_func):
-        mat_R = self.quat_to_matrix(self.quaternion[f])
-        xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
-        sdf, sdf_grad = query_func(xi)
-        self.vertices_sdf.append(sdf)
-        self.vertices_sdf_grad.append(sdf_grad)
+    # def F(self, f, query_func):
+    #     mat_R = self.quat_to_matrix(self.quaternion[f])
+    #     xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
+    #     sdf, sdf_grad = query_func(xi)
 
     def quat_mul(self, a, b):
         return torch.tensor([a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
@@ -382,11 +382,11 @@ class GenshinStart(torch.nn.Module):
 
     def physical_forward(self, f:torch.int32):
         # advect
-        v_out = (self.v[f] + torch.tensor([0.0, -9.8, 0.0]) * self.dt) * self.linear_damping
+        v_out = (self.v[f] + torch.tensor([0.0, 0.0, -9.8]) * self.dt) * self.linear_damping
         omega_out = self.omega[f] * self.angular_damping
-        # v_out_, omega_out_ = self.sdf_collision(f=f)
-        v_out_, omega_out_ = self.slope_collision(f=f)
-        v_out = v_out_ + v_out_
+        v_out_, omega_out_ = self.sdf_collision(f=f)
+        # v_out_, omega_out_ = self.slope_collision(f=f)
+        v_out = v_out + v_out_
         omega_out = omega_out + omega_out_
         # J = F · Δt = m · Δv,  F = m · Δv / Δt = J / Δt
         # torque = r × F = r × (J / Δt) = (r × J) / Δt
@@ -416,8 +416,7 @@ class GenshinStart(torch.nn.Module):
         return transform_matrix, transform_matrix_inv
 
     def query_sdf(self, pts: torch.Tensor):
-        # sdf = sdf_query_func(pts)
-        return None, None
+        # return None, None
         sdf = self.runner_background.sdf_network.sdf(pts).contiguous()
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
@@ -477,6 +476,7 @@ class GenshinStart(torch.nn.Module):
             if vis_folder !=None:
                 cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
+            # self.export_mesh(f + 1)
             # import pdb; pdb.set_trace()
         return global_loss
     
@@ -670,3 +670,4 @@ if __name__ == '__main__':
 # python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 # python genshin_start.py --mode debug --conf ./confs/json/furina.json
 # python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json
+# python genshin_start.py --mode debug --conf ./confs/json/nahida.json
