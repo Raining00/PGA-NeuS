@@ -273,8 +273,7 @@ class Runner:
 
         out_rgb_fine = []
         out_normal_fine = []
-        depth_fine = []
-
+        depth_map = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
             background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
@@ -298,9 +297,12 @@ class Runner:
                     normals = normals * render_out['inside_sphere'][..., None]
                 normals = normals.sum(dim=1).detach().cpu().numpy()
                 out_normal_fine.append(normals)
-            if feasible('depth_fine'):
-                depth_fine.append(render_out['depth_fine'].detach().cpu().numpy())
+            if feasible('depth_map'):
+                depth_map.append(render_out['depth_map'].detach().cpu().numpy())
             del render_out
+        depth_map = (depth_map - np.min(depth_map)) / (np.max(depth_map) - np.min(depth_map))
+            
+        import pdb; pdb.set_trace()
 
         img_fine = None
         if len(out_rgb_fine) > 0:
@@ -313,8 +315,8 @@ class Runner:
             normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None])
                           .reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
 
-        if len(depth_fine) > 0:
-            depth_fine = (np.concatenate(depth_fine, axis=0).reshape([H, W, -1]) * 256).clip(0, 255).astype(np.uint8)
+        if len(depth_map) > 0:
+            depth_map = (np.concatenate(depth_map, axis=0).reshape([H, W, -1]) * 256).clip(0, 255).astype(np.uint8)
 
         os.makedirs(os.path.join(self.base_exp_dir, 'validations_fine'), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, 'normals'), exist_ok=True)
@@ -326,11 +328,11 @@ class Runner:
                                         '{:0>8d}_{}_{}.png'.format(self.iter_step, i, idx)),
                            np.concatenate([img_fine[..., i],
                                            self.dataset.image_at(idx, resolution_level=resolution_level)]))
-            if len(depth_fine) > 0:
+            if len(depth_map) > 0:
                 cv.imwrite(os.path.join(self.base_exp_dir,
                                         'validations_fine',
                                         '{:0>8d}_{}_{}_depth.png'.format(self.iter_step, i, idx)),
-                           depth_fine[..., i])
+                           depth_map[..., i])
             if len(out_normal_fine) > 0:
                 cv.imwrite(os.path.join(self.base_exp_dir,
                                         'normals',
@@ -593,5 +595,6 @@ python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case soap2 --is_continue
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 7
-
+python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
+python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
 """

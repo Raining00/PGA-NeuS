@@ -375,6 +375,7 @@ class NeuSRenderer:
         s_val = ret_fine['s_val'].reshape(batch_size, n_samples).mean(dim=-1, keepdim=True)
         depth_map = ret_fine['depth_map']
         disp_map = ret_fine['disp_map']
+        
         return {
             'color_fine': color_fine,
             'depth_map': depth_map,

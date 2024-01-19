@@ -9,7 +9,7 @@
     "neus_static_background_name": "slope",
     "neus_static_background_continue": true,
     "batch_size": 512,
-    "frame_counts": 20,
+    "frame_counts": 21,
     "substep": 10, 
     "frame_dt": 0.0166667,
     "delta_frame": 3, 
