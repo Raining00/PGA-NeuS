@@ -537,10 +537,11 @@ class GenshinStart(torch.nn.Module):
             cv.imwrite((vis_folder / (str(iter_id) + "_" + str(image_id) + ".png")).as_posix(), debug_img)
         return global_loss
 
-    def render_depth_core(self, rays_o, rays_d, translation, quaternion, original_camera_c2w, depth_flag=0, zero_sdf_thereshold=1e-3, inf_sdf_thereshold=2.0, near = 0.01, far=2):
+    def render_depth_core(self, rays_o, rays_d, translation, quaternion, original_camera_c2w
+                          , query_background_flag=0, zero_sdf_thereshold=1e-3, inf_depth_thereshold=2.0, near = 1e-3, far=2.0):
         # this function is written for checking two nerf networks' depth, use sdf to calculate
-        # returns [len(rays_o), 1](float)) as a render result, depth_flag = 0 means background, 1 means object, 
-        # when queried sdf < zero_sdf_thereshold means reach the surface, sdf > inf_sdf_thereshold means reach the inf place, too far
+        # returns [len(rays_o), 1](float)) as a render result, query_background_flag = 0 means background, 1 means object, 
+        # when queried sdf < zero_sdf_thereshold means reach the surface, sdf > inf_depth_thereshold means reach the inf place, too far
         ### maybe failed because the sdf field is periodic
         # calc the real rays_o & rays_d for R + T as to object
         def query_sdf_single_point(pt, flag): # pt is a single point for query for [3] tensor
@@ -554,6 +555,14 @@ class GenshinStart(torch.nn.Module):
                 sdf = self.runner_object.sdf_network.sdf(pt_0).contiguous()
                 sdf_grad = self.runner_object.sdf_network.gradient(pt_0).squeeze().contiguous()
             return sdf[0], sdf_grad[0]
+        
+        def query_sdf_points(pts, flag): # pts should be an [len, 3] shape torch tensor
+            sdfs = None
+            if flag == 0 : # use object
+                sdfs = self.runner_object.sdf_network.sdf(pts).contiguous()
+            elif flag == 1:# use background
+                sdfs = self.runner_background.sdf_network.sdf(pts).contiguous()
+            return sdfs
         mat_R = self.quat_to_matrix(quaternion)
         tmp_transform_matrix = torch.zeros((4, 4), dtype=torch.float32)
         tmp_transform_matrix[:3, :3] = mat_R
@@ -563,21 +572,40 @@ class GenshinStart(torch.nn.Module):
         camera_pos = torch.matmul(transform_matrix_inv, original_camera_c2w) # equivalent camera pose
         rays_d = torch.matmul(transform_matrix_inv[None, :3, :3], rays_d[:, :, None]).squeeze()  # W, H, 3
         rays_o = camera_pos[None, :3, 3].expand(rays_d.shape)  # block size, 3
-        depths = torch.ones(len(rays_o)) # block size
+        rays_o = rays_o.clone()
+        depths, sdfs = torch.zeros(len(rays_o), dtype=torch.float32), torch.ones(len(rays_o), dtype=torch.float32) # block size
         # use progressive photon mapping to calculate depth for each single ray
-        for depth_index in range(0, len(rays_o)):
-            ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
+        rays_mask, zero_mask, inf_mask =  torch.ones((len(rays_o)), dtype=torch.bool), \
+            torch.ones((len(rays_o)), dtype=torch.bool), torch.ones((len(rays_o)), dtype=torch.bool)
+        while torch.sum(rays_mask) > 0:
+            pts, dirs = rays_o[rays_mask], rays_d[rays_mask]
+            tmp_sdfs = query_sdf_points(pts, flag=query_background_flag).squeeze()
             # import pdb; pdb.set_trace()
+            pts = pts + dirs * (tmp_sdfs.repeat(3, 1).T)
+            # rays_index = rays_mask.nonzero()
+            rays_o[rays_mask] = pts # update current_rays
+
+            depths[rays_mask] = depths[rays_mask] + tmp_sdfs
+            sdfs[rays_mask] = tmp_sdfs
+            zero_mask, inf_mask = sdfs < zero_sdf_thereshold, sdfs > inf_depth_thereshold
+            rays_mask = zero_mask + inf_mask
+            rays_mask = ~rays_mask
+        depths = depths.clip(near, far)
+        depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
+
+        # for depth_index in range(0, len(rays_o)):
+        #     ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
+        #     # import pdb; pdb.set_trace()
             
-            while tmp_sdf > zero_sdf_thereshold:
-                tmp_sdf, _ = query_sdf_single_point(ray_o, depth_flag)
-                ray_o = ray_o + tmp_sdf * ray_d # move the sample point
-                acc_distance = acc_distance + tmp_sdf # add the acc_dis
-                if tmp_sdf > inf_sdf_thereshold:
-                    break
-            acc_distance = max(near, min(far, acc_distance))
-            acc_distance = (1 / acc_distance - 1 / near) / (1 / far - 1 / near) # turn into depth
-            depths[depth_index] = acc_distance
+        #     while tmp_sdf > zero_sdf_thereshold:
+        #         tmp_sdf, _ = query_sdf_single_point(ray_o, query_background_flag)
+        #         ray_o = ray_o + tmp_sdf * ray_d # move the sample point
+        #         acc_distance = acc_distance + tmp_sdf # add the acc_dis
+        #         if tmp_sdf > inf_depth_thereshold:
+        #             break
+        #     acc_distance = max(near, min(far, acc_distance))
+        #     acc_distance = (1 / acc_distance - 1 / near) / (1 / far - 1 / near) # turn into depth
+            # depths[depth_index] = acc_distance
         # import pdb; pdb.set_trace()   
         return depths
     
@@ -615,7 +643,7 @@ class GenshinStart(torch.nn.Module):
             if feasible('color_fine'):
                 object_color_fine = (render_out['color_fine'].detach().cpu().numpy())
             object_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=translation, quaternion=quaternion, 
-                                                       original_camera_c2w=orgin_mat_c2w, depth_flag=1).detach().cpu().numpy()
+                                                       original_camera_c2w=orgin_mat_c2w, query_background_flag=0).detach().cpu().numpy()
             # for background, the sdf calc does not need to considerate RT
             R, T = torch.tensor([1, 0, 0, 0], dtype=torch.float32), torch.tensor([0, 0, 0], dtype=torch.float32)
             render_out = self.runner_background.renderer.render(rays_o=rays_o_batch, rays_d=rays_d_batch,
@@ -625,7 +653,7 @@ class GenshinStart(torch.nn.Module):
             if feasible('color_fine'):
                 backgorund_color_fine = (render_out['color_fine'].detach().cpu().numpy())
             background_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=T, quaternion=R, 
-                                                       original_camera_c2w=orgin_mat_c2w, depth_flag=1).detach().cpu().numpy()
+                                                       original_camera_c2w=orgin_mat_c2w, query_background_flag=1).detach().cpu().numpy()
             # compare depth, use small depth pirior
             # import pdb; pdb.set_trace()
             out_object_mask = np.where(object_depth_fine < background_depth_fine, 1, 0).astype(np.bool_)
@@ -635,7 +663,7 @@ class GenshinStart(torch.nn.Module):
             rays_count = rays_count + self.batch_size
             print("process: ", rays_count, " /", total_rays)
             
-        out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([self.H, self.W, 3]) * 256).clip(0, 255)    
+        out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 256).clip(0, 255)    
         return out_rgb_fine
  
     def render_with_mask(self, translation, quaternion, image_index=0, black_color_thereshold=1e-2):
@@ -868,7 +896,7 @@ if __name__ == '__main__':
         if not write_out_path.exists():
             os.makedirs(write_out_path)
         write_out_path = str(write_out_path) + "/0.png"
-        render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=10)
+        render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
         rt_json_path = Path("debug", "out.json")
         write_out_dir = Path("debug", "render_result_full_sequence")
