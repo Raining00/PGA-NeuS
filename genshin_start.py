@@ -86,7 +86,6 @@ def generate_all_rays(imgs, masks, cameras_K, cameras_c2w, W_all, H_all):
     # returns rays_o_all, rays_v_all, rays_gt_all, rays_mask_all formulate by frames
     return rays_o_all, rays_v_all, rays_gt_all, rays_mask_all
 
-
 class GenshinStart(torch.nn.Module):
     def __init__(self, setting_json_path):
         super(GenshinStart, self).__init__()
@@ -293,13 +292,11 @@ class GenshinStart(torch.nn.Module):
             contact_mask = contact_condition.float()[:, None]  # add a new axis to broadcast
             # calculate the sum of the contact points
             sum_position = torch.sum(self.x * contact_mask, dim=0)
-            
             # calculate the average of the contact points
             collision_ri = sum_position / num_collision
             collision_Ri = mat_R @ collision_ri
             # calculate the velocity of the contact points
             vi = self.v[f] + self.omega[f].cross(collision_Ri)
-
             v_i_n = vi.dot(contact_normal) * contact_normal
             v_i_t = vi - v_i_n
             vn_new = -self.kn * v_i_n
@@ -459,7 +456,6 @@ class GenshinStart(torch.nn.Module):
                 cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
             # self.export_mesh(f + 1)
-            # import pdb; pdb.set_trace()
         return global_loss
     
     def export_mesh(self, f:torch.int32):
@@ -516,8 +512,6 @@ class GenshinStart(torch.nn.Module):
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),reduction='sum') / rays_sum  # normalize
             global_loss += color_fine_loss.clone().detach()
             color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
-            # print("grad for raw R T : ", self.raw_quaternion.grad, self.raw_quaternion.grad)
-            # print("color fine loss ", color_fine_loss)
             torch.cuda.synchronize()
             del render_out
         ### img_debug should has same shape as rays_gt
@@ -538,24 +532,12 @@ class GenshinStart(torch.nn.Module):
         return global_loss
 
     def render_depth_core(self, rays_o, rays_d, translation, quaternion, original_camera_c2w
-                          , query_background_flag=0, zero_sdf_thereshold=1e-3, inf_depth_thereshold=2.0, near = 1e-3, far=2.0):
+                          , query_background_flag=0, zero_sdf_thereshold=1e-3, inf_depth_thereshold=2.0, near = 1e-2, far=2.0):
         # this function is written for checking two nerf networks' depth, use sdf to calculate
         # returns [len(rays_o), 1](float)) as a render result, query_background_flag = 0 means background, 1 means object, 
         # when queried sdf < zero_sdf_thereshold means reach the surface, sdf > inf_depth_thereshold means reach the inf place, too far
         ### maybe failed because the sdf field is periodic
         # calc the real rays_o & rays_d for R + T as to object
-        def query_sdf_single_point(pt, flag): # pt is a single point for query for [3] tensor
-            pt_0 = torch.zeros((1, 3), dtype=torch.float32)
-            pt_0[0] = pt  # convert pt into a sequence
-            sdf, sdf_grad = None, None
-            if flag == 0 : # use background
-                sdf = self.runner_background.sdf_network.sdf(pt_0).contiguous()
-                sdf_grad = self.runner_background.sdf_network.gradient(pt_0).squeeze().contiguous()
-            elif flag == 1:# use object
-                sdf = self.runner_object.sdf_network.sdf(pt_0).contiguous()
-                sdf_grad = self.runner_object.sdf_network.gradient(pt_0).squeeze().contiguous()
-            return sdf[0], sdf_grad[0]
-        
         def query_sdf_points(pts, flag): # pts should be an [len, 3] shape torch tensor
             sdfs = None
             if flag == 0 : # use object
@@ -574,29 +556,23 @@ class GenshinStart(torch.nn.Module):
         rays_o = camera_pos[None, :3, 3].expand(rays_d.shape)  # block size, 3
         rays_o = rays_o.clone()
         depths, sdfs = torch.zeros(len(rays_o), dtype=torch.float32), torch.ones(len(rays_o), dtype=torch.float32) # block size
-        # use progressive photon mapping to calculate depth for each single ray
         rays_mask, zero_mask, inf_mask =  torch.ones((len(rays_o)), dtype=torch.bool), \
             torch.ones((len(rays_o)), dtype=torch.bool), torch.ones((len(rays_o)), dtype=torch.bool)
         while torch.sum(rays_mask) > 0:
             pts, dirs = rays_o[rays_mask], rays_d[rays_mask]
             tmp_sdfs = query_sdf_points(pts, flag=query_background_flag).squeeze()
-            # import pdb; pdb.set_trace()
             pts = pts + dirs * (tmp_sdfs.repeat(3, 1).T)
-            # rays_index = rays_mask.nonzero()
             rays_o[rays_mask] = pts # update current_rays
-
             depths[rays_mask] = depths[rays_mask] + tmp_sdfs
             sdfs[rays_mask] = tmp_sdfs
             zero_mask, inf_mask = sdfs < zero_sdf_thereshold, sdfs > inf_depth_thereshold
             rays_mask = zero_mask + inf_mask
             rays_mask = ~rays_mask
-        depths = depths.clip(near, far)
-        depths = depths / far
+        depths = (depths.clip(near, far)) / far
+        # this is a calculation using progressive photon mapping to calculate depth for each single ray, upper is its refine, use batch calculation
         # depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
         # for depth_index in range(0, len(rays_o)):
         #     ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
-        #     # import pdb; pdb.set_trace()
-            
         #     while tmp_sdf > zero_sdf_thereshold:
         #         tmp_sdf, _ = query_sdf_single_point(ray_o, query_background_flag)
         #         ray_o = ray_o + tmp_sdf * ray_d # move the sample point
@@ -606,7 +582,6 @@ class GenshinStart(torch.nn.Module):
         #     acc_distance = max(near, min(far, acc_distance))
         #     acc_distance = (1 / acc_distance - 1 / near) / (1 / far - 1 / near) # turn into depth
             # depths[depth_index] = acc_distance
-        # import pdb; pdb.set_trace()   
         return depths
 
     def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1):
@@ -638,7 +613,6 @@ class GenshinStart(torch.nn.Module):
                 object_color_fine = (render_out['color_fine'].detach().cpu().numpy())
             object_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=translation, quaternion=quaternion, 
                                                        original_camera_c2w=orgin_mat_c2w, query_background_flag=0).detach().cpu().numpy()
-            # import pdb; pdb.set_trace()
             object_depth_fine_all.append(np.expand_dims(object_depth_fine, axis = -1).repeat(3, 1))
             # for background, the sdf calc does not need to considerate RT
             R, T = torch.tensor([1, 0, 0, 0], dtype=torch.float32), torch.tensor([0, 0, 0], dtype=torch.float32)
@@ -652,15 +626,12 @@ class GenshinStart(torch.nn.Module):
                                                        original_camera_c2w=orgin_mat_c2w, query_background_flag=1).detach().cpu().numpy()
             # compare depth, use small depth pirior
             backgorund_depth_fine_all.append(np.expand_dims(background_depth_fine, axis = -1).repeat(3, 1))
-            # import pdb; pdb.set_trace()
             out_object_mask = np.where(object_depth_fine < background_depth_fine, 1, 0).astype(np.bool_)
             out_rgb_fine_block = backgorund_color_fine
             out_rgb_fine_block[out_object_mask] = object_color_fine[out_object_mask]
             out_rgb_fine.append(out_rgb_fine_block)
             rays_count = rays_count + self.batch_size
             print("process: ", rays_count, " /", total_rays)
-        # import pdb; pdb.set_trace()
-        
         object_depth_fine_all = (np.concatenate(object_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
         backgorund_depth_fine_all = (np.concatenate(backgorund_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
         out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
@@ -702,16 +673,14 @@ class GenshinStart(torch.nn.Module):
                 background_depth_fine = (render_out['depth_map'].detach().cpu().numpy())
             # compare depth, use small depth pirior
             out_object_mask = np.where(object_color_fine < black_color_thereshold, 0, 1).astype(np.bool_)
-            # object_color_fine = object_color_fine[out_object_mask]
             out_rgb_fine_block = np.where(out_object_mask, object_color_fine, backgorund_color_fine)
             object_depth_fine = np.where(out_object_mask, object_depth_fine, 1) # make the black background as the farest
-            # out_rgb_fine_block = np.where(object_depth_fine < background_depth_fine, object_color_fine, backgorund_color_fine).astype(np.float32)
             out_rgb_fine.append(out_rgb_fine_block)
  
         out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([self.H, self.W, 3]) * 256).clip(0, 255)    
         return out_rgb_fine
+    
     # TODO: Finish new loss calculation setting
-    # TODO: Finish a full sequenece rendering fucntion
     
 def get_optimizer(mode, genshinStart):
     optimizer = None
@@ -797,10 +766,8 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
         print('raw_translation: {}, raw_quaternion: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion))
     return
 
-
     """this function is used to call refine_RT function for calculating a set of RT in dynamic video sequence
     this function requires the lenth of the input image sequence to finish RT calculation"""
-    
 def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init_T=None, write_out_folder=None):
     def refine_rt_forward(optimizer, image_id=0, vis_folder= None, iter_id=-1):
         optimizer.zero_grad()
@@ -893,7 +860,7 @@ if __name__ == '__main__':
         init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
         refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
     elif args.mode == 'render_with_depth':
-        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
+        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0, 0, 0], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
         if not write_out_path.exists():
             os.makedirs(write_out_path)
@@ -914,5 +881,4 @@ python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt_sequence --conf ./confs/json/nahida.json
 python genshin_start.py --mode render_with_depth --conf ./confs/json/nahida.json --gpu 0
 python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.json --gpu 3
-913448 817184 826137 1020196 1413442 1416004
 """

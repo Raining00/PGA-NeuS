@@ -372,8 +372,6 @@ class Runner:
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
-        # import pdb
-        # pdb.set_trace()
         out_rgb_fine = []
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
@@ -460,10 +458,6 @@ class Runner:
             t, q = motion_transform['translation'], motion_transform['rotation'],
             q = [0.9515, 0.1449, 0.2685, 0.0381]
             t = [0000, 0.0000, 0.8659]
-
-            q = [0.9515, 0.1449, 0.2685, 0.0381]
-            t = [0.0000, 0.0000, 0.8671]
-
             w, x, y, z = q
             rotate_mat = np.array([
                 [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -489,7 +483,8 @@ class Runner:
 
         print_ok(f"{frames} images has been rendered!")
 
-    def render_novel_image_with_RTKM(self):
+    def render_novel_image_with_RTKM(self, post_fix=1):
+        q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
         q = [1.1429, -0.4620, -0.1406,  0.3264]
         t = [0.1520, -0.1390,  0.3170]
         w, x, y, z = q
@@ -502,12 +497,6 @@ class Runner:
         transform_matrix[0:3, 0:3] = rotate_mat
         transform_matrix[0:3, 3] = t
         transform_matrix[3, 3] = 1.0
-    #     transform_matrix = np.array(
-    #         [[ 0.57561284, -0.75595245, -0.31177838,  0.11804556],
-    #          [ 0.77253959,  0.37774483,  0.51038357, -0.05734831],
-    #          [-0.26805302, -0.53464447,  0.80143802,  0.37365847],
-    #          [ 0.,          0.,          0.,          1.        ]]
-    #    )
         inverse_matrix = np.linalg.inv(transform_matrix)
         original_mat = np.array(
            [[-0.9630855,   0.16514869, -0.21258466,  0.25058863],
@@ -524,11 +513,9 @@ class Runner:
         [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
         )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
-        # original_mat = np.eye(4)
-        # original_mat[3, :3] = [0.1, 0.1, 0.1]
-        # original_mat[3, 3] = 0.2
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
+        import pdb; pdb.set_trace()
         self.dataset.W = 1920
         self.dataset.H = 1080
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
@@ -537,7 +524,7 @@ class Runner:
         # set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         # file_name_with_extension = os.path.basename(setting_json_path)
         # case_name, file_extension = os.path.splitext(file_name_with_extension)
-        render_path = os.path.join(self.base_exp_dir, "test_3.png")
+        render_path = os.path.join(self.base_exp_dir, "test_" + str(post_fix) + ".png")
         print("Saving render img at " + render_path)
         cv.imwrite(render_path, img)
 
@@ -579,7 +566,7 @@ if __name__ == '__main__':
     elif args.mode == 'train_dynamic':
         runner.train_dynamic_single_frame(args.render_at_pose_path)
     elif args.mode == 'render_rtkm':
-        runner.render_novel_image_with_RTKM()
+        runner.render_novel_image_with_RTKM(post_fix=4)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
