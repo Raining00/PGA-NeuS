@@ -490,8 +490,8 @@ class Runner:
         print_ok(f"{frames} images has been rendered!")
 
     def render_novel_image_with_RTKM(self):
-        q = [0.8298788601356224, -0.3148134294652406, -0.013172211662571529, 0.4604563730392552]
-        t = [0.11804556, -0.05734831, 0.37365847]
+        q = [1.1429, -0.4620, -0.1406,  0.3264]
+        t = [0.1520, -0.1390,  0.3170]
         w, x, y, z = q
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -593,8 +593,8 @@ D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bir
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
-python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case soap2 --is_continue
-python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 7
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
+
 """

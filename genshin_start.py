@@ -591,8 +591,8 @@ class GenshinStart(torch.nn.Module):
             rays_mask = zero_mask + inf_mask
             rays_mask = ~rays_mask
         depths = depths.clip(near, far)
-        depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
-
+        depths = depths / far
+        # depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
         # for depth_index in range(0, len(rays_o)):
         #     ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
         #     # import pdb; pdb.set_trace()
@@ -608,11 +608,7 @@ class GenshinStart(torch.nn.Module):
             # depths[depth_index] = acc_distance
         # import pdb; pdb.set_trace()   
         return depths
-    
-    def render_depth(self, translation, quaternion, image_index=0):
-        
-        return
-        
+
     def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1):
         def feasible(key):
             return (key in render_out) and (render_out[key] is not None)
@@ -625,9 +621,7 @@ class GenshinStart(torch.nn.Module):
             rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
         else:
             rays_o, rays_d = self.rays_o_all[image_index],  self.rays_v_all[image_index] # full resolution
-        out_rgb_fine = [] # final result
-        # import pdb; pdb.set_trace()
-        
+        out_rgb_fine, backgorund_depth_fine_all, object_depth_fine_all = [], [], [] # final result
         rays_count, total_rays = 0, len(rays_o)
         for rays_o_batch, rays_d_batch in zip(rays_o.split(self.batch_size), rays_d.split(self.batch_size)):
             near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
@@ -644,6 +638,8 @@ class GenshinStart(torch.nn.Module):
                 object_color_fine = (render_out['color_fine'].detach().cpu().numpy())
             object_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=translation, quaternion=quaternion, 
                                                        original_camera_c2w=orgin_mat_c2w, query_background_flag=0).detach().cpu().numpy()
+            # import pdb; pdb.set_trace()
+            object_depth_fine_all.append(np.expand_dims(object_depth_fine, axis = -1).repeat(3, 1))
             # for background, the sdf calc does not need to considerate RT
             R, T = torch.tensor([1, 0, 0, 0], dtype=torch.float32), torch.tensor([0, 0, 0], dtype=torch.float32)
             render_out = self.runner_background.renderer.render(rays_o=rays_o_batch, rays_d=rays_d_batch,
@@ -655,6 +651,7 @@ class GenshinStart(torch.nn.Module):
             background_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=T, quaternion=R, 
                                                        original_camera_c2w=orgin_mat_c2w, query_background_flag=1).detach().cpu().numpy()
             # compare depth, use small depth pirior
+            backgorund_depth_fine_all.append(np.expand_dims(background_depth_fine, axis = -1).repeat(3, 1))
             # import pdb; pdb.set_trace()
             out_object_mask = np.where(object_depth_fine < background_depth_fine, 1, 0).astype(np.bool_)
             out_rgb_fine_block = backgorund_color_fine
@@ -662,9 +659,12 @@ class GenshinStart(torch.nn.Module):
             out_rgb_fine.append(out_rgb_fine_block)
             rays_count = rays_count + self.batch_size
             print("process: ", rays_count, " /", total_rays)
-            
-        out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 256).clip(0, 255)    
-        return out_rgb_fine
+        # import pdb; pdb.set_trace()
+        
+        object_depth_fine_all = (np.concatenate(object_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
+        backgorund_depth_fine_all = (np.concatenate(backgorund_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
+        out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
+        return out_rgb_fine, object_depth_fine_all, backgorund_depth_fine_all
  
     def render_with_mask(self, translation, quaternion, image_index=0, black_color_thereshold=1e-2):
         # black_color_thereshold is used to confirm whether the color is black as the background
@@ -841,10 +841,12 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
     return
 
 def render_with_depth(genshinStart, translation, quaternion, write_out_path=None, image_index=0, resolution_level=1): # need to changed into a full sequence render
-    render_out_rgb = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=image_index, resolution_level=resolution_level)
+    render_out_rgb, bg_depth, obj_depth = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=image_index, resolution_level=resolution_level)
     if write_out_path is not None:
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
+        cv.imwrite(write_out_path[0:-4] + "_bg_depth.png", bg_depth)
+        cv.imwrite(write_out_path[0:-4] + "_obj_depth.png", obj_depth)
     return 
 
 def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1): # need to changed into a full sequence render
@@ -912,4 +914,5 @@ python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt_sequence --conf ./confs/json/nahida.json
 python genshin_start.py --mode render_with_depth --conf ./confs/json/nahida.json --gpu 0
 python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.json --gpu 3
+913448 817184 826137 1020196 1413442 1416004
 """
