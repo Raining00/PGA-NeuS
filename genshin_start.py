@@ -212,8 +212,8 @@ class GenshinStart(torch.nn.Module):
         out_r, out_t = [], []
         for i in range(self.frames * self.substep):
             if i % self.substep == 0:
-                out_r.append(self.translation[i // self.substep].detach().clone().cpu().numpy().tolist())
-                out_t.append(self.quaternion[i // self.substep].detach().clone().cpu().numpy().tolist())
+                out_t.append(self.translation[i // self.substep].detach().clone().cpu().numpy().tolist())
+                out_r.append(self.quaternion[i // self.substep].detach().clone().cpu().numpy().tolist())
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
         out_dict['out_r'] = out_r
@@ -529,6 +529,9 @@ class GenshinStart(torch.nn.Module):
         if vis_folder !=None and write_out_result:
             print_blink("saving debug image at " + str(iter_id) + "th validation, with image inedex " + str(image_id))
             cv.imwrite((vis_folder / (str(iter_id) + "_" + str(image_id) + ".png")).as_posix(), debug_img)
+        R_ek_loss = torch.abs(torch.norm(self.raw_quaternion) - 1) 
+        R_ek_loss.backward(retain_graph=True)
+        global_loss = R_ek_loss + global_loss
         return global_loss
 
     def render_depth_core(self, rays_o, rays_d, translation, quaternion, original_camera_c2w
@@ -665,8 +668,7 @@ class GenshinStart(torch.nn.Module):
             render_out = self.runner_background.renderer.render(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
                                                                     cos_anneal_ratio=self.runner_background.get_cos_anneal_ratio(),
-                                                                    background_rgb=background_rgb
-            )
+                                                                    background_rgb=background_rgb)
             if feasible('color_fine'):
                 backgorund_color_fine = (render_out['color_fine'].detach().cpu().numpy())
             if feasible('depth_map'):
@@ -702,8 +704,7 @@ def get_optimizer(mode, genshinStart):
                 {'params': getattr(genshinStart, 'mu'), 'lr': 1e-2},
                 {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2},
                 {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-2}
-            ]
-            ,
+            ],
             amsgrad=False
         )
     elif mode == "refine_rt":
@@ -711,8 +712,7 @@ def get_optimizer(mode, genshinStart):
             [
                 {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-2},
                 {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-2},
-            ]
-            ,
+            ],
             amsgrad=False
         )
     return optimizer
@@ -761,9 +761,9 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
         if loss.norm() < 1e-3:
             break
         optimizer.step()
-        out_json_path = "./refine_rt/out_jsons/" + str(i) + ".json"
+        out_json_path = "./debug/refine_rt_single/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
-        print('raw_translation: {}, raw_quaternion: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion))
+        print('raw_translation: {}, raw_quaternion: {}, loss: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion, loss.norm()))
     return
 
     """this function is used to call refine_RT function for calculating a set of RT in dynamic video sequence
@@ -792,7 +792,7 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
             if loss.norm() < 1e-2:
                 break
             optimizer.step()
-
+            # normalize init R
             print("calculated norm: " + str(loss.norm))
             print('raw_translation: {}, raw_quaternion: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion))
         # refine finished, store RT result
@@ -801,7 +801,6 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
         refined_RT_in_sequence[tmp_name + "T"] = genshinStart.raw_translation.detach().cpu().numpy().tolist()
         print("new RT after refine " + str(refined_RT_in_sequence[tmp_name + "R"]) + " " + str(refined_RT_in_sequence[tmp_name + "T"]))
     if write_out_folder is not None: # write out result
-        
         result_json_path= str(write_out_folder) + str("/out.json")
         with open(result_json_path, "w") as f:
             json.dump(refined_RT_in_sequence, f, indent=4)       
@@ -828,7 +827,7 @@ def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=
         translation, quaternion = rt_params_list[str(index) + "_T"], rt_params_list[str(index) + "_R"]
         translation = torch.tensor(translation, dtype=torch.float32)
         quaternion = torch.tensor(quaternion, dtype=torch.float32)
-        render_out_rgb = genshinStart.render_with_mask(translation=translation, quaternion=quaternion, image_index=index)
+        render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index)
         write_out_path = write_out_dir + "/" + str(index) + ".png"
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
@@ -854,21 +853,21 @@ if __name__ == '__main__':
     if args.mode == "train":
         train_dynamic()
     elif args.mode == "refine_rt":
-        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True) # use 0 as default
+        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
     elif args.mode == "refine_rt_sequence":
-        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
+        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
         refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
     elif args.mode == 'render_with_depth':
-        init_R, init_T = torch.tensor([1.1429, -0.4620, -0.1406,  0.3264], dtype=torch.float32, requires_grad=True), torch.tensor([0, 0, 0], dtype=torch.float32, requires_grad=True)
+        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.15002988278865814, -0.1365453451871872, 0.3106136620044708], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
         if not write_out_path.exists():
             os.makedirs(write_out_path)
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "out.json")
-        write_out_dir = Path("debug", "render_result_full_sequence")
+        rt_json_path = Path("debug", "out2.json")
+        write_out_dir = Path("debug", "render_result_full_sequence3")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart)

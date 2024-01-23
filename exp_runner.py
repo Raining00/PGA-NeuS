@@ -15,7 +15,7 @@ from pyhocon import ConfigFactory
 from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
-
+import json
 
 
 def print_error(*message):
@@ -261,9 +261,7 @@ class Runner:
     def validate_image(self, idx=-1, resolution_level=-1):
         if idx < 0:
             idx = np.random.randint(self.dataset.n_images)
-
         print('Validate: iter: {}, camera: {}'.format(self.iter_step, idx))
-
         if resolution_level < 0:
             resolution_level = self.validate_resolution_level
         rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
@@ -284,7 +282,6 @@ class Runner:
                                               far,
                                               cos_anneal_ratio=self.get_cos_anneal_ratio(),
                                               background_rgb=background_rgb)
-
             def feasible(key):
                 return (key in render_out) and (render_out[key] is not None)
 
@@ -301,9 +298,7 @@ class Runner:
                 depth_map.append(render_out['depth_map'].detach().cpu().numpy())
             del render_out
         depth_map = (depth_map - np.min(depth_map)) / (np.max(depth_map) - np.min(depth_map))
-            
         import pdb; pdb.set_trace()
-
         img_fine = None
         if len(out_rgb_fine) > 0:
             img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
@@ -373,6 +368,8 @@ class Runner:
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
         out_rgb_fine = []
+        normal_fine = []
+        n_samples = self.renderer.n_samples + self.renderer.n_importance
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
             background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
@@ -384,10 +381,10 @@ class Runner:
                                               cos_anneal_ratio=self.get_cos_anneal_ratio(),
                                               background_rgb=background_rgb)
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
-
+            normal_fine.append((render_out['gradients'] * render_out['weights'][:, :n_samples, None])).detach().cpu().numpy()
             del render_out
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
-        return img_fine
+        return img_fine, normal_fine
 
     def validate_mesh(self, world_space=False, resolution=256, threshold=0.0):
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
@@ -421,17 +418,12 @@ class Runner:
         video_dir = os.path.join(self.base_exp_dir, 'render')
         os.makedirs(video_dir, exist_ok=True)
         h, w, _ = images[0].shape
-        writer = cv.VideoWriter(os.path.join(video_dir,
-                                             '{:0>8d}_{}_{}.mp4'.format(self.iter_step, img_idx_0, img_idx_1)),
-                                fourcc, 30, (w, h))
-
+        writer = cv.VideoWriter(os.path.join(video_dir,'{:0>8d}_{}_{}.mp4'.format(self.iter_step, img_idx_0, img_idx_1)),fourcc, 30, (w, h))
         for image in images:
             writer.write(image)
-
         writer.release()
 
     def save_render_pic_at(self, setting_json_path):
-        camera_pose = calc_new_pose(args.render_at_pose_path)
         img = self.render_novel_image_at(camera_pose, 2)
         set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         file_name_with_extension = os.path.basename(setting_json_path)
@@ -485,7 +477,7 @@ class Runner:
 
     def render_novel_image_with_RTKM(self, post_fix=1):
         q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
-        q = [1.1429, -0.4620, -0.1406,  0.3264]
+        q = [0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558]
         t = [0.1520, -0.1390,  0.3170]
         w, x, y, z = q
         rotate_mat = np.array([
@@ -515,11 +507,11 @@ class Runner:
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         self.dataset.W = 1920
         self.dataset.H = 1080
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
-        img = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
+        img, normal = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
         # img loss
         # set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         # file_name_with_extension = os.path.basename(setting_json_path)

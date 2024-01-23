@@ -16,7 +16,7 @@
     "images_path": "./public_data/soap_dynamic1/image",
     "masks_path": "./public_data/soap_dynamic1/mask",
     "image_type": "png",
-    "R0": [1.1429, -0.4620, -0.1406,  0.3264],
+    "R0": [0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558],
     "T0": [0.1520, -0.1390,  0.3170],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
