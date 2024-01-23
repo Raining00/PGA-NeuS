@@ -212,8 +212,8 @@ class GenshinStart(torch.nn.Module):
         out_r, out_t = [], []
         for i in range(self.frames * self.substep):
             if i % self.substep == 0:
-                out_t.append(self.translation[i // self.substep].detach().clone().cpu().numpy().tolist())
-                out_r.append(self.quaternion[i // self.substep].detach().clone().cpu().numpy().tolist())
+                out_t.append(self.translation[i].detach().clone().cpu().numpy().tolist())
+                out_r.append(self.quaternion[i].detach().clone().cpu().numpy().tolist())
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
         out_dict['out_r'] = out_r
@@ -735,7 +735,7 @@ def train_dynamic(max_f, iters, genshinStart):
         if loss.norm() < 1e-6:
             break
         optimizer.step()
-        out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
+        out_json_path = "./debug/train_dynamic/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
         print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
         
@@ -832,7 +832,6 @@ def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
     return 
-
 
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
