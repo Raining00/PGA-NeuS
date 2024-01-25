@@ -209,11 +209,11 @@ class GenshinStart(torch.nn.Module):
         out_dict = {}
         out_kn = self.kn.detach().clone().cpu().numpy().tolist()
         out_mu = self.mu.detach().clone().cpu().numpy().tolist()
-        out_r, out_t = [], []
+        out_r, out_t = {}, {}
         for i in range(self.frames * self.substep):
             if i % self.substep == 0:
-                out_t.append(self.translation[i].detach().clone().cpu().numpy().tolist())
-                out_r.append(self.quaternion[i].detach().clone().cpu().numpy().tolist())
+                out_t[i // self.substep] = self.translation[i].detach().clone().cpu().numpy().tolist()
+                out_r[i // self.substep] = self.quaternion[i].detach().clone().cpu().numpy().tolist()
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
         out_dict['out_r'] = out_r
@@ -866,7 +866,7 @@ if __name__ == '__main__':
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
         rt_json_path = Path("debug", "out2.json")
-        write_out_dir = Path("debug", "render_result_full_sequence3")
+        write_out_dir = Path("debug", "render_result_full_sequence_for_train_dynamic")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart)
