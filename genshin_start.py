@@ -14,6 +14,21 @@ import math
 import trimesh
 from pathlib import Path
 import os
+import torch.nn as nn
+
+class CollisionResponseNet(nn.Module):
+    def __init__(self):
+        super(CollisionResponseNet, self).__init__()
+        self.fc1 = nn.Linear(in_features=6, out_features=128)  # 输入特征维度为6
+        self.fc2 = nn.Linear(in_features=128, out_features=64)
+        self.fc3 = nn.Linear(in_features=64, out_features=3)   # 输出为三维速度向量
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)  # 不需要激活函数，因为速度可以是任何值
+        return x
+
 
 def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_count, with_fixed_camera=False,
                             camera_params_list=None, pic_mode="png"):  # assmue load from a json file
@@ -152,6 +167,9 @@ class GenshinStart(torch.nn.Module):
         self.quaternion = []
         self.v = []
         self.omega = []
+        self.collision_net = CollisionResponseNet()
+        self.optimizer = torch.optim.Adam(self.collision_net.parameters(), lr=1e-3)
+
         # torch tensors
         self.mass_center = torch.tensor(self.mesh.center_mass, dtype=torch.float32)
         self.x = torch.tensor(vertices, dtype=torch.float32, requires_grad=True)
@@ -345,14 +363,18 @@ class GenshinStart(torch.nn.Module):
             # calculate the velocity of the contact points
             vi = self.v[f] + self.omega[f].cross(collision_Ri)
 
-            v_i_n = vi.dot(collision_normal) * collision_normal
-            v_i_t = vi - v_i_n
-            vn_new = -self.kn * v_i_n
-            alpha = 1.0 - (self.mu * (1.0 + self.kn) * (torch.norm(v_i_n) / (torch.norm(v_i_t) + 1e-6)))
-            if alpha < 0.0:
-                alpha = 0.0
-            vt_new = alpha * v_i_t
-            vi_new = vn_new + vt_new
+            # v_i_n = vi.dot(collision_normal) * collision_normal
+            # v_i_t = vi - v_i_n
+            # vn_new = -self.kn * v_i_n
+            # alpha = 1.0 - (self.mu * (1.0 + self.kn) * (torch.norm(v_i_n) / (torch.norm(v_i_t) + 1e-6)))
+            # if alpha < 0.0:
+            #     alpha = 0.0
+            # vt_new = alpha * v_i_t
+            # vi_new = vn_new + vt_new
+
+            collistion_feature = torch.cat([vi, collision_normal], dim=0)
+            vi_new = self.collision_net(collistion_feature)
+            
             inertial_inv = torch.inverse(mat_R @ self.inertia_referance @ mat_R.t())
             collision_Rri_mat = self.GetCrossMatrix(collision_Ri)
             k = torch.tensor([[self.inv_mass, 0.0, 0.0],\
@@ -401,7 +423,7 @@ class GenshinStart(torch.nn.Module):
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
 
-    def forward(self, max_f: int, vis_folder=None):
+    def forward(self, max_f: int, vis_folder=None, write_out_flag=False):
         pbar = trange(1, max_f)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
@@ -444,15 +466,16 @@ class GenshinStart(torch.nn.Module):
             W, H, cnt = self.W, self.H, 0
             rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
             debug_img = np.zeros_like(rays_mask).astype(np.float32)
-            for index in range(0, H):
-                for j in range(0, W):
-                    if rays_mask[index][j][0]:
-                        debug_img[index][j][0] = debug_rgb[cnt][0]
-                        debug_img[index][j][1] = debug_rgb[cnt][1]
-                        debug_img[index][j][2] = debug_rgb[cnt][2]
-                        cnt = cnt + 1
+            if write_out_flag:
+                for index in range(0, H):
+                    for j in range(0, W):
+                        if rays_mask[index][j][0]:
+                            debug_img[index][j][0] = debug_rgb[cnt][0]
+                            debug_img[index][j][1] = debug_rgb[cnt][1]
+                            debug_img[index][j][2] = debug_rgb[cnt][2]
+                            cnt = cnt + 1
             print_blink("saving debug image at " + str(i) + " index")
-            if vis_folder !=None:
+            if vis_folder !=None and write_out_flag:
                 cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
             pbar.set_description(f"[Forward] loss: {global_loss.item()}")
             # self.export_mesh(f + 1)
@@ -519,13 +542,14 @@ class GenshinStart(torch.nn.Module):
         W, H, cnt = self.W, self.H, 0
         rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
         debug_img = np.zeros_like(rays_mask).astype(np.float32)
-        for index in range(0, H):
-            for j in range(0, W):
-                if rays_mask[index][j][0]:
-                    debug_img[index][j][0] = debug_rgb[cnt][0]
-                    debug_img[index][j][1] = debug_rgb[cnt][1]
-                    debug_img[index][j][2] = debug_rgb[cnt][2] 
-                    cnt = cnt + 1
+        if write_out_result:
+            for index in range(0, H):
+                for j in range(0, W):
+                    if rays_mask[index][j][0]:
+                        debug_img[index][j][0] = debug_rgb[cnt][0]
+                        debug_img[index][j][1] = debug_rgb[cnt][1]
+                        debug_img[index][j][2] = debug_rgb[cnt][2] 
+                        cnt = cnt + 1
         if vis_folder !=None and write_out_result:
             print_blink("saving debug image at " + str(iter_id) + "th validation, with image inedex " + str(image_id))
             cv.imwrite((vis_folder / (str(iter_id) + "_" + str(image_id) + ".png")).as_posix(), debug_img)
@@ -717,24 +741,22 @@ def get_optimizer(mode, genshinStart):
         )
     return optimizer
 
-def train_dynamic(max_f, iters, genshinStart):
-    def train_forward(optimizer, vis_folder= None):
-        optimizer.zero_grad()
+def train_dynamic(max_f, iters, genshinStart, write_out_flag=False):
+    def train_forward(vis_folder= None):
+        genshinStart.optimizer.zero_grad()
         if vis_folder  != None:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
         loss = torch.tensor(np.nan)
         while loss.isnan():
-            loss = genshinStart.forward(max_f, vis_folder)
+            loss = genshinStart.forward(max_f, vis_folder, write_out_flag=write_out_flag)
         return loss
-
-    optimizer = get_optimizer('train_dynamic', genshinStart)
     for i in range(iters):
         genshinStart.set_init_v()
-        loss = train_forward(optimizer=optimizer, vis_folder=Path('train_dynamic') / ('iter_' + str(i)))
-        if loss.norm() < 1e-6:
+        loss = train_forward(vis_folder=Path('train_dynamic') / ('iter_' + str(i)))
+        if loss.norm() < 1e-3:
             break
-        optimizer.step()
+        genshinStart.optimizer.step()
         out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
         print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
@@ -870,7 +892,7 @@ if __name__ == '__main__':
         write_out_dir = Path("debug", "render_result_full_sequence3")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
-        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart)
+        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False)
 """ 
 D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
