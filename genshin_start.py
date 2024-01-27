@@ -611,7 +611,7 @@ class GenshinStart(torch.nn.Module):
             # depths[depth_index] = acc_distance
         return depths
 
-    def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1):
+    def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1, black_color_thereshold=8e-2):
         def feasible(key):
             return (key in render_out) and (render_out[key] is not None)
         # returns final render result
@@ -652,8 +652,12 @@ class GenshinStart(torch.nn.Module):
             background_depth_fine = self.render_depth_core(rays_o=rays_o_batch, rays_d=rays_d_batch, translation=T, quaternion=R, 
                                                        original_camera_c2w=orgin_mat_c2w, query_background_flag=1).detach().cpu().numpy()
             # compare depth, use small depth pirior
+            obj_color_sum = object_color_fine.sum(axis=1)
+            # import pdb; pdb.set_trace()
             backgorund_depth_fine_all.append(np.expand_dims(background_depth_fine, axis = -1).repeat(3, 1))
             out_object_mask = np.where(object_depth_fine < background_depth_fine, 1, 0).astype(np.bool_)
+            out_object_mask = out_object_mask * (np.where(obj_color_sum > black_color_thereshold, 1, 0).astype(np.bool_))
+            
             out_rgb_fine_block = backgorund_color_fine
             out_rgb_fine_block[out_object_mask] = object_color_fine[out_object_mask]
             out_rgb_fine.append(out_rgb_fine_block)
@@ -888,8 +892,8 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "out2.json")
-        write_out_dir = Path("debug", "render_result_full_sequence3")
+        rt_json_path = Path("debug", "out_physical.json")
+        write_out_dir = Path("debug", "render_result_full_sequence_physical")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False)
