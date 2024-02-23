@@ -237,8 +237,13 @@ class GenshinStart(torch.nn.Module):
         out_r, out_t = {}, {}
         for i in range(self.frames * self.substep):
             if i % self.substep == 0:
+<<<<<<< HEAD
                 out_dict[str(i // self.substep) + "_T"] = (self.translation[i].detach().clone().cpu().numpy().tolist())
                 out_dict[str(i // self.substep) + "_R"] = (self.quaternion[i].detach().clone().cpu().numpy().tolist())
+=======
+                out_t[i // self.substep] = self.translation[i].detach().clone().cpu().numpy().tolist()
+                out_r[i // self.substep] = self.quaternion[i].detach().clone().cpu().numpy().tolist()
+>>>>>>> 2c2ee580e9c4b893644898ae88ff5b98e257040b
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
         out_dict['init_V'] = self.init_v.detach().clone().cpu().numpy().tolist()
@@ -844,7 +849,11 @@ def train_dynamic(max_f, iters, genshinStart, write_out_flag=False, train_mode="
             break
         genshinStart.optimizer.step()
         optimizer.step()
+<<<<<<< HEAD
         out_json_path = "./train_dynamic_" + train_mode + "/out_jsons/" + str(i) + ".json"
+=======
+        out_json_path = "./debug/train_dynamic/out_jsons/" + str(i) + ".json"
+>>>>>>> 2c2ee580e9c4b893644898ae88ff5b98e257040b
         genshinStart.write_out_paras(out_json_path)
         print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
         
@@ -942,7 +951,6 @@ def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=
         cv.imwrite(write_out_path, render_out_rgb)
     return 
 
-
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -977,8 +985,13 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
+<<<<<<< HEAD
         rt_json_path = Path("debug", "out_physical.json")
         write_out_dir = Path("debug", "render_result_full_sequence_physical")
+=======
+        rt_json_path = Path("debug", "out2.json")
+        write_out_dir = Path("debug", "render_result_full_sequence_for_train_dynamic")
+>>>>>>> 2c2ee580e9c4b893644898ae88ff5b98e257040b
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False, train_mode="rt_mode")

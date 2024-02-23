@@ -1,7 +1,7 @@
 import json 
 
 if __name__ == '__main__':
-    input_path = "./debug/out.json"
+    input_path = "./debug/236.json"
     out_path = "./debug/out2.json"
     rt_list, r_list, j_list = None, None, None
     with open(input_path, 'r') as json_file:
