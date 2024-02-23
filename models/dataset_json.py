@@ -39,7 +39,7 @@ class Dataset:
 
         self.camera_outside_sphere = conf.get_bool('camera_outside_sphere', default=True)
         self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)
-
+        self.focus_rays_in_mask = conf.get_bool('focus_rays_in_mask')
         self.pic_mode = conf.get_string('pic_mode')
         self.images_lis = sorted(glob(os.path.join(self.data_dir, 'image/*.' + self.pic_mode)))
 
@@ -67,6 +67,7 @@ class Dataset:
         for frame_id in range(1, self.frame_count + 1):
             for camera_id in range(1, self.camera_count + 1):
                 mat_name = str(frame_id) + "_" + str(camera_id)
+                mat_name = str(frame_id) # use as for static 
                 if self.json_type == "separate":
                     idx = frame_id * self.camera_count + camera_id - self.camera_count - 1
                     camera_matrix_map = camera_params_list[idx]  # get current camera_info_map

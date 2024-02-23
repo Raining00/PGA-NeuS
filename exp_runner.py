@@ -297,8 +297,8 @@ class Runner:
             if feasible('depth_map'):
                 depth_map.append(render_out['depth_map'].detach().cpu().numpy())
             del render_out
-        depth_map = (depth_map - np.min(depth_map)) / (np.max(depth_map) - np.min(depth_map))
-        import pdb; pdb.set_trace()
+        # depth_map = (depth_map - np.min(depth_map)) / (np.max(depth_map) - np.min(depth_map))
+        # import pdb; pdb.set_trace()
         img_fine = None
         if len(out_rgb_fine) > 0:
             img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
@@ -568,12 +568,12 @@ if __name__ == '__main__':
 """
 conda activate neus
 cd D:/gitwork/NeuS
-D:python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
+python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
 python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
-
+python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
 """

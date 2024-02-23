@@ -15,6 +15,7 @@
     "delta_frame": 3, 
     "images_path": "./public_data/soap_dynamic1/image",
     "masks_path": "./public_data/soap_dynamic1/mask",
+    "pre_trained_RT": "./confs/json/out_refine_RT.json",
     "image_type": "png",
     "R0": [0.9150, -0.2691, -0.1273,  0.2763],
     "T0": [0.1536, -0.1478,  0.3126],

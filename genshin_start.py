@@ -19,7 +19,7 @@ import torch.nn as nn
 class CollisionResponseNet(nn.Module):
     def __init__(self):
         super(CollisionResponseNet, self).__init__()
-        self.fc1 = nn.Linear(in_features=6, out_features=128)  # 输入特征维度为6
+        self.fc1 = nn.Linear(in_features=10, out_features=128)  # 输入特征维度为6
         self.fc2 = nn.Linear(in_features=128, out_features=64)
         self.fc3 = nn.Linear(in_features=64, out_features=3)   # 输出为三维速度向量
 
@@ -149,6 +149,13 @@ class GenshinStart(torch.nn.Module):
                                     , with_fixed_camera=self.with_fixed_camera, camera_params_list=camera_params_list))
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
+        self.pretrained_R, self.pretrained_T = [], []
+        with open(motion_data["pre_trained_RT"], "r") as json_file:
+            rt_params_list = json.load(json_file)
+            for index in range(0, self.frame_counts):
+                self.pretrained_R.append(torch.tensor([rt_params_list[str(index) + "_R"]], requires_grad=True, dtype=torch.float32))
+                self.pretrained_T.append(torch.tensor([rt_params_list[str(index) + "_T"]], requires_grad=True, dtype=torch.float32))
+        
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks,
              cameras_K, cameras_M,self.W, self.H)
@@ -227,15 +234,16 @@ class GenshinStart(torch.nn.Module):
         out_dict = {}
         out_kn = self.kn.detach().clone().cpu().numpy().tolist()
         out_mu = self.mu.detach().clone().cpu().numpy().tolist()
-        out_r, out_t = [], []
+        out_r, out_t = {}, {}
         for i in range(self.frames * self.substep):
             if i % self.substep == 0:
-                out_t.append(self.translation[i // self.substep].detach().clone().cpu().numpy().tolist())
-                out_r.append(self.quaternion[i // self.substep].detach().clone().cpu().numpy().tolist())
+                out_dict[str(i // self.substep) + "_T"] = (self.translation[i].detach().clone().cpu().numpy().tolist())
+                out_dict[str(i // self.substep) + "_R"] = (self.quaternion[i].detach().clone().cpu().numpy().tolist())
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
-        out_dict['out_r'] = out_r
-        out_dict['out_t'] = out_t
+        out_dict['init_V'] = self.init_v.detach().clone().cpu().numpy().tolist()
+        # out_dict['out_r'] = out_r
+        # out_dict['out_t'] = out_t
         dir_path = os.path.dirname(file_path)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
@@ -360,20 +368,21 @@ class GenshinStart(torch.nn.Module):
             value, collision_normal = self.query_background_sdf(collision_x.reshape(1,3))
             # print('collision_ri:{}'.format(collision_ri))
             collision_Ri = mat_R @ collision_ri
-            # calculate the velocity of the contact points
             vi = self.v[f] + self.omega[f].cross(collision_Ri)
-
-            # v_i_n = vi.dot(collision_normal) * collision_normal
-            # v_i_t = vi - v_i_n
-            # vn_new = -self.kn * v_i_n
-            # alpha = 1.0 - (self.mu * (1.0 + self.kn) * (torch.norm(v_i_n) / (torch.norm(v_i_t) + 1e-6)))
-            # if alpha < 0.0:
-            #     alpha = 0.0
-            # vt_new = alpha * v_i_t
-            # vi_new = vn_new + vt_new
-
-            collistion_feature = torch.cat([vi, collision_normal], dim=0)
-            vi_new = self.collision_net(collistion_feature)
+            
+            # calculate the velocity of the contact points
+            v_i_n = vi.dot(collision_normal) * collision_normal
+            v_i_t = vi - v_i_n
+            vn_new = -self.kn * v_i_n
+            alpha = 1.0 - (self.mu * (1.0 + self.kn) * (torch.norm(v_i_n) / (torch.norm(v_i_t) + 1e-6)))
+            if alpha < 0.0:
+                alpha = 0.0
+            vt_new = alpha * v_i_t
+            vi_new = vn_new + vt_new
+            ## import pdb; pdb.set_trace()
+            
+            # collistion_feature = torch.cat([collision_x, vi, collision_normal, value[0]], dim=0)
+            # vi_new = self.collision_net(collistion_feature)
             
             inertial_inv = torch.inverse(mat_R @ self.inertia_referance @ mat_R.t())
             collision_Rri_mat = self.GetCrossMatrix(collision_Ri)
@@ -423,7 +432,7 @@ class GenshinStart(torch.nn.Module):
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
 
-    def forward(self, max_f: int, vis_folder=None, write_out_flag=False):
+    def forward(self, max_f: int, vis_folder=None, write_out_flag=False, train_mode="rt_mode"):
         pbar = trange(1, max_f)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
@@ -434,60 +443,129 @@ class GenshinStart(torch.nn.Module):
             # orgin_mat_K_inv = torch.from_numpy(np.linalg.inv(self.cameras_K[i].astype(np.float32))).to(self.device)
             for f in range(self.substep * (i - 1), self.substep * i):
                 self.physical_forward(f)
-            rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
-            self.rays_v_all[i]
-            rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
-                rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
-            rays_sum = len(rays_o)
-            debug_rgb = []
-            for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size),
-                                                                 rays_d.split(self.batch_size),
-                                                                 rays_gt.split(self.batch_size)):
-                near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-                background_rgb = None
-                # this render out contains grad & img loss, find out its reaction with phy simualtion
-                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
-                                                                        near=near, far=far,
-                                                                        R=self.quaternion[f + 1], T=self.translation[f + 1],
-                                                                        camera_c2w=orgin_mat_c2w,
-                                                                        cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
-                                                                        background_rgb=background_rgb)               
-                color_fine = render_out["color_fine"]
-                color_error = (color_fine - rays_gt_batch)
-                debug_rgb.append(color_fine.clone().detach().cpu().numpy())
-                color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
-                                            reduction='sum') / rays_sum / max_f  # normalize
-                global_loss += color_fine_loss.clone().detach()
-                color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
-                torch.cuda.synchronize()
-                del render_out
-            ### img_debug should has same shape as rays_gt
-            debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
-            W, H, cnt = self.W, self.H, 0
-            rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
-            debug_img = np.zeros_like(rays_mask).astype(np.float32)
-            if write_out_flag:
-                for index in range(0, H):
-                    for j in range(0, W):
-                        if rays_mask[index][j][0]:
-                            debug_img[index][j][0] = debug_rgb[cnt][0]
-                            debug_img[index][j][1] = debug_rgb[cnt][1]
-                            debug_img[index][j][2] = debug_rgb[cnt][2]
-                            cnt = cnt + 1
-            print_blink("saving debug image at " + str(i) + " index")
-            if vis_folder !=None and write_out_flag:
-                cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
-            pbar.set_description(f"[Forward] loss: {global_loss.item()}")
-            # self.export_mesh(f + 1)
+            if train_mode != "rt_mode":
+                rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
+                self.rays_v_all[i]
+
+                rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
+                    rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
+                rays_sum = len(rays_o)
+                debug_rgb = []
+                # count = 0
+                for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size),
+                                                                    rays_d.split(self.batch_size),
+                                                                    rays_gt.split(self.batch_size)):
+                    # count += 1
+                    near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+                    background_rgb = None
+                    # this render out contains grad & img loss, find out its reaction with phy simualtion
+                    # start_time = time.time()
+                    render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                            near=near, far=far,
+                                                                            R=self.quaternion[f + 1], T=self.translation[f + 1],
+                                                                            camera_c2w=orgin_mat_c2w,
+                                                                            cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                            background_rgb=background_rgb)         
+                    # end_time = time.time()   
+                    # execution_time = end_time - start_time
+                    # print("excution time ", execution_time, " sec")   
+                    color_fine = render_out["color_fine"]
+                    color_error = (color_fine - rays_gt_batch)
+                    debug_rgb.append(color_fine.clone().detach().cpu().numpy())
+                    color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
+                                                reduction='sum') / rays_sum / max_f  # normalize
+                    global_loss += color_fine_loss.clone().detach()
+                    color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
+                    torch.cuda.synchronize()
+                    del render_out
+                # print_info("repeated times ： ", count)
+                # img_debug should has same shape as rays_gt
+                debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
+                W, H, cnt = self.W, self.H, 0
+                rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
+                debug_img = np.zeros_like(rays_mask).astype(np.float32)
+                if write_out_flag:
+                    for index in range(0, H):
+                        for j in range(0, W):
+                            if rays_mask[index][j][0]:
+                                debug_img[index][j][0] = debug_rgb[cnt][0]
+                                debug_img[index][j][1] = debug_rgb[cnt][1]
+                                debug_img[index][j][2] = debug_rgb[cnt][2]
+                                cnt = cnt + 1
+                print_blink("saving debug image at " + str(i) + " index")
+                if vis_folder !=None and write_out_flag:
+                    cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
+                pbar.set_description(f"[Forward] loss: {global_loss.item()}")
+                self.export_mesh(f + 1)
+            else:
+                gt_R, gt_T = self.pretrained_R[i], self.pretrained_T[i]
+                weight_R, weight_T = 1.0 / 2, 1.0 / 2
+
+                #L2
+                loss_translation = torch.norm(self.translation[f + 1] - gt_T, p=2)
+                loss_quaternion = torch.norm(self.quaternion[f + 1] - gt_R, p=2) 
+
+                # L1 
+                l1_reg_translation = torch.norm(self.translation[f + 1] - gt_T, p=1)
+                l1_reg_quaternion = torch.norm(self.quaternion[f + 1] - gt_R, p=1)
+
+                lambda_translation = 0.01  
+                lambda_quaternion = 0.01 
+
+                # 综合计算最终损失
+                loss = (weight_T * loss_translation + weight_R * loss_quaternion) # self.frame_counts
+                loss.backward(retain_graph=True)
+                # self.optimizer.step()
+                self.export_mesh(f + 1, vis_folder=vis_folder)
+                if write_out_flag and vis_folder is not None: # write out debug image
+                    rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], self.rays_v_all[i]
+                    rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
+                        rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
+                    debug_rgb = []                    
+                    for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size),
+                                                                    rays_d.split(self.batch_size),
+                                                                    rays_gt.split(self.batch_size)):
+                        near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+                        background_rgb = None
+                        render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                                near=near, far=far,
+                                                                                R=self.quaternion[f + 1], T=self.translation[f + 1],
+                                                                                camera_c2w=orgin_mat_c2w,
+                                                                                cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                                background_rgb=background_rgb)         
+                        color_fine = render_out["color_fine"]
+                        debug_rgb.append(color_fine.clone().detach().cpu().numpy())
+                        torch.cuda.synchronize()
+                        del render_out
+                    debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
+                    W, H, cnt = self.W, self.H, 0
+                    rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
+                    debug_img = np.zeros_like(rays_mask).astype(np.float32)
+                    for index in range(0, H):
+                        for j in range(0, W):
+                            if rays_mask[index][j][0]:
+                                debug_img[index][j][0] = debug_rgb[cnt][0]
+                                debug_img[index][j][1] = debug_rgb[cnt][1]
+                                debug_img[index][j][2] = debug_rgb[cnt][2]
+                                cnt = cnt + 1
+                    print_blink("saving debug image at " + str(i) + " index")
+                    if vis_folder !=None and write_out_flag:
+                        cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
+                global_loss = global_loss + loss.clone().detach()
+                pbar.set_description(f"[Forward] loss: {global_loss.item()}")
         return global_loss
     
-    def export_mesh(self, f:torch.int32):
+    def export_mesh(self, f:torch.int32,vis_folder = None):
         with torch.no_grad():
             mat_R = self.quat_to_matrix(self.quaternion[f])
             xi = self.translation[f] +  torch.matmul(self.x, mat_R.t()) + self.mass_center[None]
             faces = self.mesh.faces
             mesh = trimesh.Trimesh(vertices=xi.clone().detach().cpu().numpy(), faces=faces)
-            mesh.export(str(Path('mesh_result') / '{}.obj'.format(f // self.substep)))
+            if vis_folder is None:
+                vis_folder = str(Path('mesh_result'))
+            if not os.path.exists(vis_folder):
+                os.makedirs(vis_folder)
+            mesh.export(str(vis_folder) + '/{}.obj'.format(f // self.substep))
 
     def backward(self, max_f: np.int32):
         pbar = trange(1, max_f)
@@ -745,7 +823,7 @@ def get_optimizer(mode, genshinStart):
         )
     return optimizer
 
-def train_dynamic(max_f, iters, genshinStart, write_out_flag=False):
+def train_dynamic(max_f, iters, genshinStart, write_out_flag=False, train_mode="rt_mode"):
     def train_forward(vis_folder= None):
         genshinStart.optimizer.zero_grad()
         if vis_folder  != None:
@@ -753,15 +831,20 @@ def train_dynamic(max_f, iters, genshinStart, write_out_flag=False):
                 os.makedirs(vis_folder)
         loss = torch.tensor(np.nan)
         while loss.isnan():
-            loss = genshinStart.forward(max_f, vis_folder, write_out_flag=write_out_flag)
+            loss = genshinStart.forward(max_f, vis_folder, write_out_flag=write_out_flag, train_mode=train_mode)
         return loss
+    
+    optimizer = get_optimizer('train_dynamic', genshinStart=genshinStart)
     for i in range(iters):
         genshinStart.set_init_v()
-        loss = train_forward(vis_folder=Path('train_dynamic') / ('iter_' + str(i)))
+        
+        optimizer.zero_grad()
+        loss = train_forward(vis_folder=Path('train_dynamic_' + train_mode) / ('iter_' + str(i)))
         if loss.norm() < 1e-3:
             break
         genshinStart.optimizer.step()
-        out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
+        optimizer.step()
+        out_json_path = "./train_dynamic_" + train_mode + "/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
         print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
         
@@ -883,7 +966,9 @@ if __name__ == '__main__':
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
     elif args.mode == "refine_rt_sequence":
         init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
-        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
+        # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
+        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=None, iters=50)
+        
     elif args.mode == 'render_with_depth':
         init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.15002988278865814, -0.1365453451871872, 0.3106136620044708], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
@@ -896,7 +981,7 @@ if __name__ == '__main__':
         write_out_dir = Path("debug", "render_result_full_sequence_physical")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
-        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False)
+        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False, train_mode="rt_mode")
 """ 
 D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
 python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
