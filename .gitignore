@@ -160,6 +160,7 @@ tmp
 dynamic_test
 mesh_result
 train_dynamic
+train_dynamic_rt_mode
 debug
 *.zip
 refine_rt
