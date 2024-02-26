@@ -983,11 +983,8 @@ if __name__ == '__main__':
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False, train_mode="rt_mode")
 """ 
-D:\gitwork\genshinnerf> python genshin_start_copy.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
-python genshin_start.py --mode debug --conf ./dynamic_test/genshin_start.json --case bird
-python genshin_start.py --mode debug --conf ./confs/json/furina.json
-python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
+python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt_sequence --conf ./confs/json/nahida.json
 python genshin_start.py --mode render_with_depth --conf ./confs/json/nahida.json --gpu 0
 python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.json --gpu 3
