@@ -364,9 +364,12 @@ class Runner:
 
     def render_novel_image_at(self, camera_pose, resolution_level, intrinsic_inv=None):
         rays_o, rays_d = self.dataset.gen_rays_at_pose_mat(camera_pose, resolution_level=resolution_level,intrinsic_inv=intrinsic_inv)
+        
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
+        # import pdb; pdb.set_trace()
+        
         out_rgb_fine = []
         normal_fine = []
         n_samples = self.renderer.n_samples + self.renderer.n_importance
@@ -381,7 +384,7 @@ class Runner:
                                               cos_anneal_ratio=self.get_cos_anneal_ratio(),
                                               background_rgb=background_rgb)
             out_rgb_fine.append(render_out['color_fine'].detach().cpu().numpy())
-            normal_fine.append((render_out['gradients'] * render_out['weights'][:, :n_samples, None])).detach().cpu().numpy()
+            # normal_fine.append((render_out['gradients'] * render_out['weights'][:, :n_samples, None])).detach().cpu().numpy()
             del render_out
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine, normal_fine
@@ -477,8 +480,8 @@ class Runner:
 
     def render_novel_image_with_RTKM(self, post_fix=1):
         q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
-        q = [0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558]
-        t = [0.1520, -0.1390,  0.3170]
+        q = [0.46320000290870667, -0.04439999908208847, 0.03220000118017197, -0.8848999738693237]
+        t =  [-0.09430000185966492, -0.022700000554323196, 0.1590999960899353]
         w, x, y, z = q
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -491,27 +494,26 @@ class Runner:
         transform_matrix[3, 3] = 1.0
         inverse_matrix = np.linalg.inv(transform_matrix)
         original_mat = np.array(
-           [[-0.9630855,   0.16514869, -0.21258466,  0.25058863],
-            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
-            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
-            [ 0.,          0.,          0.,          1.,        ]]
+ [[ 0.94636756, -0.1777333,   0.2698134,   -0.14891088],
+  [-0.31938437, -0.6407732,   0.69814277,  -1.0693798 ],
+  [ 0.04880596, -0.7468739,  -0.6631722,    0.8686853 ],
+  [ 0.,          0.,          0.,          1.        ]]
        )
         
         intrinsic_mat = np.array(
-
-       [[ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02,  0.00000000e+00],
-        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02,  0.00000000e+00],
-        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
-        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
+ [[ 4.35143164e+03, -3.63514664e-05,  1.19279785e+03,  0.00000000e+00],
+  [ 0.00000000e+00,  4.40391943e+03,  5.34325195e+02,  0.00000000e+00],
+  [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
+  [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
         )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
         # import pdb; pdb.set_trace()
-        self.dataset.W = 1920
+        self.dataset.W = 2336
         self.dataset.H = 1080
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
-        img, normal = self.render_novel_image_at(transform_matrix, resolution_level=1, intrinsic_inv=intrinsic_inv)
+        img, normal = self.render_novel_image_at(transform_matrix, resolution_level=6, intrinsic_inv=intrinsic_inv)
         # img loss
         # set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         # file_name_with_extension = os.path.basename(setting_json_path)
@@ -540,6 +542,7 @@ if __name__ == '__main__':
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
+    parser.add_argument('--post_fix', type=int, default=0)
 
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
@@ -558,7 +561,7 @@ if __name__ == '__main__':
     elif args.mode == 'train_dynamic':
         runner.train_dynamic_single_frame(args.render_at_pose_path)
     elif args.mode == 'render_rtkm':
-        runner.render_novel_image_with_RTKM(post_fix=4)
+        runner.render_novel_image_with_RTKM(post_fix=args.post_fix)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
@@ -570,10 +573,10 @@ conda activate neus
 cd D:/gitwork/NeuS
 python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
 python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
-python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case tree
 """

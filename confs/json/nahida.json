@@ -1,40 +1,37 @@
 {
     "device": "cuda",
-    "static_background_path": "",
-    "static_mesh_path": "./exp/soap2_merge/womask_white/meshes/soap_merge.obj",
+    "static_mesh_path": "./exp/tree/womask_white/meshes/tree.obj",
     "neus_object_conf_path": "./confs/thin_structure_white_bkgd.conf",
-    "neus_static_object_name": "soap2_merge",
+    "neus_static_object_name": "tree",
     "neus_static_object_continue": true,
     "neus_background_conf_path": "./confs/thin_structure.conf",
-    "neus_static_background_name": "scene1",
+    "neus_static_background_name": "slide",
     "neus_static_background_continue": true,
     "batch_size": 512,
-    "frame_counts": 21,
+    "frame_counts": 24,
     "substep": 10, 
-    "frame_dt": 0.0166667,
+    "frame_dt": 0.0333333333333333,
     "delta_frame": 3, 
-    "images_path": "./public_data/soap_dynamic1/image",
-    "masks_path": "./public_data/soap_dynamic1/mask",
+    "images_path": "./public_data/tree_slide_dynamic1/image",
+    "masks_path": "./public_data/tree_slide_dynamic1/mask",
+    "with_pre_trained_RT": false,
     "pre_trained_RT": "./confs/json/out_refine_RT.json",
     "image_type": "png",
-    "R0": [0.9150, -0.2691, -0.1273,  0.2763],
-    "T0": [0.1536, -0.1478,  0.3126],
+    "R0": [ 0.4632, -0.0444,  0.0322, -0.8849],
+    "T0": [-0.0943, -0.0227,  0.1591],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
-        "M": [
-            [-0.9630855,   0.16514869, -0.21258466,  0.25058863],
-            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
-            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
-            [ 0.0,          0.0,          0.0,          1.0    ]
-        ],
+        "M":  [
+        [ 0.94636756, -0.1777333,   0.2698134,   -0.14891088],
+        [-0.31938437, -0.6407732,   0.69814277,  -1.0693798 ],
+        [ 0.04880596, -0.7468739,  -0.6631722,    0.8686853 ],
+        [ 0.0,          0.0,          0.0,          1.0     ]
+    ],
         "K": [
-        [ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02],
-        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02],
+        [ 4.35143164e+03, -3.63514664e-05,  1.19279785e+03],
+        [ 0.00000000e+00,  4.40391943e+03,  5.34325195e+02],
         [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
-        
-        ]
-    },
+    ]
 
-    "use_qem" : true,
-    "simplified_object": "./exp/bunny/wmask/meshes/00100000_s.ply"
+    }
 }

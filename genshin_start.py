@@ -150,11 +150,11 @@ class GenshinStart(torch.nn.Module):
         self.cameras_K, self.cameras_M = cameras_K, cameras_M
         self.W, self.H = images[0].shape[1], images[0].shape[0]
         self.pretrained_R, self.pretrained_T = [], []
-        with open(motion_data["pre_trained_RT"], "r") as json_file:
-            rt_params_list = json.load(json_file)
-            for index in range(0, self.frame_counts):
-                self.pretrained_R.append(torch.tensor([rt_params_list[str(index) + "_R"]], requires_grad=True, dtype=torch.float32))
-                self.pretrained_T.append(torch.tensor([rt_params_list[str(index) + "_T"]], requires_grad=True, dtype=torch.float32))
+        # with open(motion_data["pre_trained_RT"], "r") as json_file:
+        #     rt_params_list = json.load(json_file)
+        #     for index in range(0, self.frame_counts):
+        #         self.pretrained_R.append(torch.tensor([rt_params_list[str(index) + "_R"]], requires_grad=True, dtype=torch.float32))
+        #         self.pretrained_T.append(torch.tensor([rt_params_list[str(index) + "_T"]], requires_grad=True, dtype=torch.float32))
         
         with torch.no_grad():
             self.rays_o_all, self.rays_v_all, self.rays_gt_all, self.rays_mask_all = generate_all_rays(images, masks,
@@ -175,7 +175,7 @@ class GenshinStart(torch.nn.Module):
         self.v = []
         self.omega = []
         self.collision_net = CollisionResponseNet()
-        self.optimizer = torch.optim.Adam(self.collision_net.parameters(), lr=1e-3)
+        # self.optimizer = torch.optim.Adam(self.collision_net.parameters(), lr=1e-3)
 
         # torch tensors
         self.mass_center = torch.tensor(self.mesh.center_mass, dtype=torch.float32)
@@ -809,7 +809,7 @@ def get_optimizer(mode, genshinStart):
             [
                 {'params': getattr(genshinStart, 'mu'), 'lr': 1e-2},
                 {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2},
-                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-2}
+                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-3}
             ],
             amsgrad=False
         )
@@ -857,15 +857,18 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
         loss = genshinStart.refine_RT(vis_folder=vis_folder, iter_id=iter_id, image_id=image_id)
 
         return loss    
+    import  pdb;
     if require_init: # not set init rt for the first loop, need init
             if init_R is None or init_T is None:
                 init_R, init_T = [], []  # should be len(4) and len(3) array 
-    optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
     genshinStart.raw_translation, genshinStart.raw_quaternion = init_T, init_R
-
-    optimizer = get_optimizer('refine_rt', genshinStart)
+    # pdb.set_trace()
+    
+    optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
+    
     for i in range(iters):
-        genshinStart.set_init_v()
+        optimizer.zero_grad()
+        
         loss = refine_rt_forward(optimizer=optimizer, vis_folder=Path('refine_rt'), iter_id=i)
         if loss.norm() < 1e-3:
             break
@@ -891,7 +894,6 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
         optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
         if image_id == 0:
             genshinStart.raw_translation, genshinStart.raw_quaternion = init_T, init_R # only the first frame needs to init
-        optimizer = get_optimizer('refine_rt', genshinStart)
         for i in range(iters):
             genshinStart.set_init_v()
             if write_out_folder is not None:
@@ -961,15 +963,14 @@ if __name__ == '__main__':
     if args.mode == "train":
         train_dynamic()
     elif args.mode == "refine_rt":
-        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True) # use 0 as default
+        init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
     elif args.mode == "refine_rt_sequence":
-        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.1520, -0.1390,  0.3170], dtype=torch.float32, requires_grad=True)
-        # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
-        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 21, write_out_folder=None, iters=50)
-        
+        init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
+        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
+        # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=None, iters=50)
     elif args.mode == 'render_with_depth':
-        init_R, init_T = torch.tensor([0.8908351063728333, -0.36010658740997314, -0.10959087312221527, 0.254412978887558], dtype=torch.float32, requires_grad=True), torch.tensor([0.15002988278865814, -0.1365453451871872, 0.3106136620044708], dtype=torch.float32, requires_grad=True)
+        init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
         if not write_out_path.exists():
             os.makedirs(write_out_path)
