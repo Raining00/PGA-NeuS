@@ -41,7 +41,6 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
     else:   # not pre-defined list
         with open(camera_params_path, "r") as json_file:
             camera_params_list = json.load(json_file)
-
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
     for i in range(1, frames_count + 1):
         picture_name = f"{i:03}"
@@ -471,6 +470,7 @@ class GenshinStart(torch.nn.Module):
                     # print("excution time ", execution_time, " sec")   
                     color_fine = render_out["color_fine"]
                     color_error = (color_fine - rays_gt_batch)
+                    color_error = color_error
                     debug_rgb.append(color_fine.clone().detach().cpu().numpy())
                     color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
                                                 reduction='sum') / rays_sum / max_f  # normalize
@@ -686,7 +686,7 @@ class GenshinStart(torch.nn.Module):
         #             break
         #     acc_distance = max(near, min(far, acc_distance))
         #     acc_distance = (1 / acc_distance - 1 / near) / (1 / far - 1 / near) # turn into depth
-            # depths[depth_index] = acc_distance
+        # depths[depth_index] = acc_distance
         return depths
 
     def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1, black_color_thereshold=8e-2):
@@ -740,7 +740,7 @@ class GenshinStart(torch.nn.Module):
             out_rgb_fine_block[out_object_mask] = object_color_fine[out_object_mask]
             out_rgb_fine.append(out_rgb_fine_block)
             rays_count = rays_count + self.batch_size
-            print("process: ", rays_count, " /", total_rays)
+            # print("process: ", rays_count, " /", total_rays)
         object_depth_fine_all = (np.concatenate(object_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
         backgorund_depth_fine_all = (np.concatenate(backgorund_depth_fine_all, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
         out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([int(self.H / resolution_level), int(self.W / resolution_level), 3]) * 255).clip(0, 255).astype(np.uint8)    
@@ -788,6 +788,7 @@ class GenshinStart(torch.nn.Module):
         out_rgb_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([self.H, self.W, 3]) * 256).clip(0, 255)    
         return out_rgb_fine
     
+    
     # TODO: Finish new loss calculation setting
     
 def get_optimizer(mode, genshinStart):
@@ -816,8 +817,8 @@ def get_optimizer(mode, genshinStart):
     elif mode == "refine_rt":
         optimizer = torch.optim.Adam(
             [
-                {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-2},
-                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-2},
+                {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-3},
+                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-3},
             ],
             amsgrad=False
         )
@@ -825,7 +826,7 @@ def get_optimizer(mode, genshinStart):
 
 def train_dynamic(max_f, iters, genshinStart, write_out_flag=False, train_mode="rt_mode"):
     def train_forward(vis_folder= None):
-        genshinStart.optimizer.zero_grad()
+        # genshinStart.optimizer.zero_grad()
         if vis_folder  != None:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
@@ -837,12 +838,11 @@ def train_dynamic(max_f, iters, genshinStart, write_out_flag=False, train_mode="
     optimizer = get_optimizer('train_dynamic', genshinStart=genshinStart)
     for i in range(iters):
         genshinStart.set_init_v()
-        
         optimizer.zero_grad()
         loss = train_forward(vis_folder=Path('train_dynamic_' + train_mode) / ('iter_' + str(i)))
         if loss.norm() < 1e-3:
             break
-        genshinStart.optimizer.step()
+        # genshinStart.optimizer.step()
         optimizer.step()
         out_json_path = "./train_dynamic_" + train_mode + "/out_jsons/" + str(i) + ".json"
         genshinStart.write_out_paras(out_json_path)
@@ -880,7 +880,7 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
 
     """this function is used to call refine_RT function for calculating a set of RT in dynamic video sequence
     this function requires the lenth of the input image sequence to finish RT calculation"""
-def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init_T=None, write_out_folder=None):
+def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init_T=None, write_out_folder=None, start_idx=0):
     def refine_rt_forward(optimizer, image_id=0, vis_folder= None, iter_id=-1):
         optimizer.zero_grad()
         if vis_folder != None:
@@ -889,10 +889,10 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
         loss = genshinStart.refine_RT(image_id=image_id, vis_folder=vis_folder, iter_id=iter_id, write_out_result=True)
         return loss   
     refined_RT_in_sequence = {} # store result json
-    for image_id in range(0, sequence_length):
+    for image_id in range(start_idx, sequence_length):
         # refine image_id th image
         optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
-        if image_id == 0:
+        if image_id == start_idx:
             genshinStart.raw_translation, genshinStart.raw_quaternion = init_T, init_R # only the first frame needs to init
         for i in range(iters):
             genshinStart.set_init_v()
@@ -926,7 +926,7 @@ def render_with_depth(genshinStart, translation, quaternion, write_out_path=None
         cv.imwrite(write_out_path[0:-4] + "_obj_depth.png", obj_depth)
     return 
 
-def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1): # need to changed into a full sequence render
+def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, render_option="full", resolution_level=1): # need to changed into a full sequence render
     if not Path(write_out_dir).exists():
         print("making new dir " + write_out_dir)
         os.makedirs(Path(write_out_dir)) # make dir
@@ -938,7 +938,16 @@ def render_full_sequence(genshinStart, rt_json_path, write_out_dir, image_count=
         translation, quaternion = rt_params_list[str(index) + "_T"], rt_params_list[str(index) + "_R"]
         translation = torch.tensor(translation, dtype=torch.float32)
         quaternion = torch.tensor(quaternion, dtype=torch.float32)
-        render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index)
+        if render_option == "full":
+            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index)
+        else:
+            print("**************only rendering the object without mask constrain***************************")
+            original_mat = genshinStart.cameras_M[0]
+            intrinsic_mat= genshinStart.cameras_K[0]
+            quaternion = quaternion.cpu()
+            translation = translation.cpu()
+            render_out_rgb = genshinStart.runner_object.render_novel_image_with_RTKM(q=quaternion,t=translation,
+   original_mat=original_mat, intrinsic_mat=intrinsic_mat, img_W=1920, img_H=1080, return_render_out=True, resolution_level=resolution_level)
         write_out_path = write_out_dir + "/" + str(index) + ".png"
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
@@ -956,6 +965,7 @@ if __name__ == '__main__':
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--image_id', type=int, default=0)
+    parser.add_argument('--image_count', type=int, default=1)
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
     genshinStart = GenshinStart(args.conf)
@@ -963,11 +973,11 @@ if __name__ == '__main__':
     if args.mode == "train":
         train_dynamic()
     elif args.mode == "refine_rt":
-        init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True) # use 0 as default
+        init_R, init_T = torch.tensor([-0.0212,  0.3816, -0.5622,  0.7335], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0165, -0.1012,  0.2699], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
     elif args.mode == "refine_rt_sequence":
-        init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
-        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
+        init_R, init_T = torch.tensor([-0.0212,  0.3816, -0.5622,  0.7335], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0165, -0.1012,  0.2699], dtype=torch.float32, requires_grad=True)
+        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 15, write_out_folder=Path("debug", "refine_rt_sequence"), iters=150)
         # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=None, iters=50)
     elif args.mode == 'render_with_depth':
         init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
@@ -977,15 +987,19 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "out2.json")
-        write_out_dir = Path("debug", "render_result_full_sequence_for_train_dynamic")
-        render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
+        rt_json_path = Path("debug", "refine_rt_sequence", "out_soap_init.json")
+        write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_soap_init")
+        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="obj_only", 
+                        resolution_level = 1)
     else:
-        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=False, train_mode="rt_mode")
+        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt_sequence --conf ./confs/json/nahida.json
 python genshin_start.py --mode render_with_depth --conf ./confs/json/nahida.json --gpu 0
 python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.json --gpu 3
+python genshin_start.py --mode render_result_full --conf ./confs/json/tree_slide.json --image_count 24
+python genshin_start.py --mode render_result_full --conf ./confs/json/soap.json --image_count 21
+python genshin_start.py --mode render_result_full --conf ./confs/json/yoyo_slide.json --image_count 50
 """

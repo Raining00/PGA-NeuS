@@ -1,0 +1,36 @@
+{
+    "device": "cuda",
+    "static_mesh_path": "./exp/yoyoball/womask_white/meshes/yoyoball.obj",
+    "neus_object_conf_path": "./confs/small_structure_white_bkgd.conf",
+    "neus_static_object_name": "yoyoball",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/thin_structure_white_bkgd.conf",
+    "neus_static_background_name": "slide2",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 50,
+    "substep": 10, 
+    "frame_dt": 0.016666667,
+    "delta_frame": 3, 
+    "images_path": "./public_data/yoyo_slide/image",
+    "masks_path": "./public_data/yoyo_slide/mask",
+    "with_pre_trained_RT": false,
+    "pre_trained_RT": "./debug/refine_rt_sequence/out.json",
+    "image_type": "png",
+    "R0": [-0.1696,  0.0160,  0.0726,  0.9866],
+    "T0": [-0.0657,  0.0523,  0.0448],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M":  [
+            [-0.3735146,  -0.7024477,   0.6058498, -0.55369043],
+            [-0.9249084,   0.2320759,  -0.3011399,  0.22341669],
+            [ 0.0709319,  -0.6728357,  -0.7363835,   0.6192576],
+            [ 0.0,         0.0,         0.0,          1.0       ]
+    ],
+        "K": 
+            [[ 1.77627307e+03,  4.26224760e-05,  9.48091187e+02],
+            [ 0.00000000e+00,  1.76415063e+03,  4.97789246e+02],
+            [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
+
+    }
+}

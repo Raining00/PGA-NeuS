@@ -478,11 +478,26 @@ class Runner:
 
         print_ok(f"{frames} images has been rendered!")
 
-    def render_novel_image_with_RTKM(self, post_fix=1):
-        q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
-        q = [0.46320000290870667, -0.04439999908208847, 0.03220000118017197, -0.8848999738693237]
-        t =  [-0.09430000185966492, -0.022700000554323196, 0.1590999960899353]
+    def render_novel_image_with_RTKM(self, post_fix=1, original_mat=None, intrinsic_mat=None, q=None, t=None, img_W=1920, img_H=1080, return_render_out=False, resolution_level=1):
+        if q is None or t is None:
+            q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
+            q = [-0.0351,  0.3808, -0.5680,  0.7289]
+            t = [-0.0184, -0.1036,  0.29]
         w, x, y, z = q
+        if original_mat is None:
+            original_mat = np.array(
+    [[ 0.9817186, -0.04105261,  0.1858583,  -0.20907213],
+    [-0.15002508, -0.7678246,   0.6228466,  -0.50035614],
+    [ 0.1171371,  -0.6393435,  -0.7599466,   0.64620024],
+    [ 0.,          0.,          0.,          1.        ]]
+        )
+        if intrinsic_mat is None:
+            intrinsic_mat = np.array(
+    [[ 3.27436621e+03,-1.71585634e-05,  9.47884644e+02,  0.00000000e+00],
+    [ 0.00000000e+00,  3.21768457e+03,  2.97527985e+02,  0.00000000e+00],
+    [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
+    [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
+            )       
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
             [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
@@ -493,34 +508,25 @@ class Runner:
         transform_matrix[0:3, 3] = t
         transform_matrix[3, 3] = 1.0
         inverse_matrix = np.linalg.inv(transform_matrix)
-        original_mat = np.array(
- [[ 0.94636756, -0.1777333,   0.2698134,   -0.14891088],
-  [-0.31938437, -0.6407732,   0.69814277,  -1.0693798 ],
-  [ 0.04880596, -0.7468739,  -0.6631722,    0.8686853 ],
-  [ 0.,          0.,          0.,          1.        ]]
-       )
-        
-        intrinsic_mat = np.array(
- [[ 4.35143164e+03, -3.63514664e-05,  1.19279785e+03,  0.00000000e+00],
-  [ 0.00000000e+00,  4.40391943e+03,  5.34325195e+02,  0.00000000e+00],
-  [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
-  [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
-        )
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
         # import pdb; pdb.set_trace()
-        self.dataset.W = 2336
-        self.dataset.H = 1080
+        self.dataset.W = img_W
+        self.dataset.H = img_H
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
-        img, normal = self.render_novel_image_at(transform_matrix, resolution_level=6, intrinsic_inv=intrinsic_inv)
+        img, normal = self.render_novel_image_at(transform_matrix, resolution_level=resolution_level, intrinsic_inv=intrinsic_inv)
         # img loss
         # set_dir, file_name_with_extension = os.path.dirname(setting_json_path), os.path.basename(setting_json_path)
         # file_name_with_extension = os.path.basename(setting_json_path)
         # case_name, file_extension = os.path.splitext(file_name_with_extension)
         render_path = os.path.join(self.base_exp_dir, "test_" + str(post_fix) + ".png")
         print("Saving render img at " + render_path)
-        cv.imwrite(render_path, img)
+        if return_render_out:
+            return img
+        else:
+            cv.imwrite(render_path, img)
+            return None
 
     def get_runner(neus_conf_path, case_name, is_continue):
         return Runner(neus_conf_path, mode="train", case=case_name, is_continue=is_continue)
@@ -551,7 +557,7 @@ if __name__ == '__main__':
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'validate_mesh':
-        runner.validate_mesh(world_space=False, resolution=128, threshold=args.mcube_threshold)
+        runner.validate_mesh(world_space=False, resolution=512, threshold=args.mcube_threshold)
     elif args.mode == 'render_at':
         runner.save_render_pic_at(args.render_at_pose_path)
     elif args.mode == 'validate_image':
@@ -577,6 +583,9 @@ python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf 
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
-python exp_runner.py --mode train --conf ./confs/wmask_blender_bunny.conf --case bunny2
-python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case tree
+python exp_runner.py --mode train --conf ./confs/thin_structure_white_bkgd.conf --case bunny2
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --is_continue --gpu 0 --case tree
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case yoyo --is_continue --gpu 2 --post_fix 1
+python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkgd.conf --case yoyoball --is_continue --gpu 2 --post_fix 6
+
 """
