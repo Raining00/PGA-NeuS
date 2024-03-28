@@ -1,0 +1,35 @@
+{
+    "device": "cuda",
+    "static_mesh_path": "./exp/tree/womask_white/meshes/tree.obj",
+    "neus_object_conf_path": "./confs/tree_structure_white_bkgd.conf",
+    "neus_static_object_name": "tree",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/thin_structure_joyo.conf",
+    "neus_static_background_name": "joyo",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 15,
+    "substep": 10, 
+    "frame_dt": 0.0166667,
+    "delta_frame": 3, 
+    "images_path": "./public_data/tree_joyo/image",
+    "masks_path": "./public_data/tree_joyo/mask",
+    "with_pre_trained_RT": false,
+    "pre_trained_RT": "./debug/refine_rt_sequence/out.json",
+    "image_type": "png",
+    "R0": [ -0.0212,  0.3816, -0.5622,  0.7335],
+    "T0": [-0.0165, -0.1012,  0.2699],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M":   [
+        [ 0.9817186, -0.04105261,  0.1858583,  -0.20907213],
+        [-0.15002508, -0.7678246,   0.6228466,  -0.50035614],
+        [ 0.1171371,  -0.6393435,  -0.7599466,   0.64620024],
+        [ 0.0,          0.0,          0.0,          1.0       ]],
+        "K": [
+        [ 3.27436621e+03,-1.71585634e-05,  9.47884644e+02],
+        [ 0.00000000e+00,  3.21768457e+03,  2.97527985e+02],
+        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
+
+    }
+}

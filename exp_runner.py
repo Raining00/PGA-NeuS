@@ -481,22 +481,22 @@ class Runner:
     def render_novel_image_with_RTKM(self, post_fix=1, original_mat=None, intrinsic_mat=None, q=None, t=None, img_W=1920, img_H=1080, return_render_out=False, resolution_level=1):
         if q is None or t is None:
             q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
-            q = [-0.0351,  0.3808, -0.5680,  0.7289]
-            t = [-0.0184, -0.1036,  0.29]
+            q = [0.8575973040867548 , 0.12052744095487312 , 0.0695865504800327 , 0.4951340343707851]
+            t = [-0.0454,  0.0062,  0.0963]
         w, x, y, z = q
         if original_mat is None:
             original_mat = np.array(
-    [[ 0.9817186, -0.04105261,  0.1858583,  -0.20907213],
-    [-0.15002508, -0.7678246,   0.6228466,  -0.50035614],
-    [ 0.1171371,  -0.6393435,  -0.7599466,   0.64620024],
-    [ 0.,          0.,          0.,          1.        ]]
+[[0.9478352,  -0.176360,   0.2655286,  -0.10285065],
+[-0.31557244, -0.6366862,   0.70359415, -0.7547572],
+[0.04497216, -0.7506848,  -0.65912807,  0.6240542],
+[0.,          0.,          0.,          1.]]
         )
         if intrinsic_mat is None:
             intrinsic_mat = np.array(
-    [[ 3.27436621e+03,-1.71585634e-05,  9.47884644e+02,  0.00000000e+00],
-    [ 0.00000000e+00,  3.21768457e+03,  2.97527985e+02,  0.00000000e+00],
-    [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  0.00000000e+00],
-    [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]]
+ [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
+ [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
+ [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+
             )       
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -511,7 +511,6 @@ class Runner:
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
-        # import pdb; pdb.set_trace()
         self.dataset.W = img_W
         self.dataset.H = img_H
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
@@ -537,7 +536,6 @@ if __name__ == '__main__':
 
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     # torch.cuda.set_device(args.gpu)
-
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
@@ -549,7 +547,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
     parser.add_argument('--post_fix', type=int, default=0)
-
+    parser.add_argument('--resolution_level', type=int, default=1)
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
@@ -567,7 +565,7 @@ if __name__ == '__main__':
     elif args.mode == 'train_dynamic':
         runner.train_dynamic_single_frame(args.render_at_pose_path)
     elif args.mode == 'render_rtkm':
-        runner.render_novel_image_with_RTKM(post_fix=args.post_fix)
+        runner.render_novel_image_with_RTKM(post_fix=args.post_fix, resolution_level=args.resolution_level)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
@@ -587,5 +585,5 @@ python exp_runner.py --mode train --conf ./confs/thin_structure_white_bkgd.conf 
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --is_continue --gpu 0 --case tree
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case yoyo --is_continue --gpu 2 --post_fix 1
 python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkgd.conf --case yoyoball --is_continue --gpu 2 --post_fix 6
-
+python exp_runner.py --mode render_rtkm --conf ./confs/tree_structure_white_bkgd.conf --case tree_original --is_continue --post_fix 0 --resolution_level 6
 """

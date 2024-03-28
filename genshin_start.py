@@ -638,7 +638,7 @@ class GenshinStart(torch.nn.Module):
 
     def render_depth_core(self, rays_o, rays_d, translation, quaternion, original_camera_c2w
                           , query_background_flag=0, zero_sdf_thereshold=1e-3, inf_depth_thereshold=2.0, near = 1e-2, far=2.0):
-        # this function is written for checking two nerf networks' depth, use sdf to calculate
+        # this function is written for comparing two nerf networks' depth, use sdf to calculate
         # returns [len(rays_o), 1](float)) as a render result, query_background_flag = 0 means background, 1 means object, 
         # when queried sdf < zero_sdf_thereshold means reach the surface, sdf > inf_depth_thereshold means reach the inf place, too far
         ### maybe failed because the sdf field is periodic
@@ -674,7 +674,7 @@ class GenshinStart(torch.nn.Module):
             rays_mask = zero_mask + inf_mask
             rays_mask = ~rays_mask
         depths = (depths.clip(near, far)) / far
-        # this is a calculation using progressive photon mapping to calculate depth for each single ray, upper is its refine, use batch calculation
+        # this is a calculation using progressive photon mapping to calculate depth for each single ray, upper is its refinement, using batch calculation
         # depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
         # for depth_index in range(0, len(rays_o)):
         #     ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
@@ -689,7 +689,7 @@ class GenshinStart(torch.nn.Module):
         # depths[depth_index] = acc_distance
         return depths
 
-    def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1, black_color_thereshold=8e-2):
+    def render_with_depth(self, translation, quaternion, image_index=0, resolution_level=1, black_color_thereshold=8e-2, camera_c2w=None, intrinsic_mat=None):
         def feasible(key):
             return (key in render_out) and (render_out[key] is not None)
         # returns final render result
@@ -697,6 +697,12 @@ class GenshinStart(torch.nn.Module):
         if resolution_level > 1:
             camera_K = self.cameras_K[image_index].astype(np.float32)
             camera_M = self.cameras_M[image_index].astype(np.float32)
+            rays_o, rays_d = generate_rays_with_K_and_M(transform_matrix=camera_M, intrinsic_mat=camera_K, W=self.W, H=self.H, resolution_level=resolution_level)
+            rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
+        elif camera_c2w is not None and intrinsic_mat is not None: # those mat should be np.float32 format
+            camera_K = intrinsic_mat.astype(np.float32) 
+            camera_M = camera_c2w.astype(np.float32)
+            orgin_mat_c2w = torch.from_numpy(camera_c2w.astype(np.float32)).to(self.device)
             rays_o, rays_d = generate_rays_with_K_and_M(transform_matrix=camera_M, intrinsic_mat=camera_K, W=self.W, H=self.H, resolution_level=resolution_level)
             rays_o, rays_d = rays_o.reshape(-1, 3), rays_d.reshape(-1, 3)
         else:
@@ -917,8 +923,9 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
             json.dump(refined_RT_in_sequence, f, indent=4)       
     return
 
-def render_with_depth(genshinStart, translation, quaternion, write_out_path=None, image_index=0, resolution_level=1): # need to changed into a full sequence render
-    render_out_rgb, bg_depth, obj_depth = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=image_index, resolution_level=resolution_level)
+def render_with_depth(genshinStart, translation, quaternion, write_out_path=None, image_index=0, resolution_level=1, camera_c2w=None, intrinsic_mat=None): # need to changed into a full sequence render
+    render_out_rgb, bg_depth, obj_depth = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=image_index, 
+                                                                         resolution_level=resolution_level, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat)
     if write_out_path is not None:
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
@@ -926,7 +933,7 @@ def render_with_depth(genshinStart, translation, quaternion, write_out_path=None
         cv.imwrite(write_out_path[0:-4] + "_obj_depth.png", obj_depth)
     return 
 
-def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, render_option="full", resolution_level=1): # need to changed into a full sequence render
+def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, render_option="full", resolution_level=1, camera_c2w=None, intrinsic_mat=None): # need to changed into a full sequence render
     if not Path(write_out_dir).exists():
         print("making new dir " + write_out_dir)
         os.makedirs(Path(write_out_dir)) # make dir
@@ -939,9 +946,14 @@ def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, re
         translation = torch.tensor(translation, dtype=torch.float32)
         quaternion = torch.tensor(quaternion, dtype=torch.float32)
         if render_option == "full":
-            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index)
+            print("**************rendering full training view image using depth calculation womask*********************")
+            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index) # make sure c2w is null
+        elif render_option == "novel":
+            print("**************rendering full novel view image using depth calculation womask************************")
+            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index
+                                                                  , camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat)
         else:
-            print("**************only rendering the object without mask constrain***************************")
+            print("**************only rendering the object without mask constrain**************************************")
             original_mat = genshinStart.cameras_M[0]
             intrinsic_mat= genshinStart.cameras_K[0]
             quaternion = quaternion.cpu()
@@ -952,6 +964,7 @@ def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, re
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
     return 
+
 
 if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
@@ -973,7 +986,7 @@ if __name__ == '__main__':
     if args.mode == "train":
         train_dynamic()
     elif args.mode == "refine_rt":
-        init_R, init_T = torch.tensor([-0.0212,  0.3816, -0.5622,  0.7335], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0165, -0.1012,  0.2699], dtype=torch.float32, requires_grad=True) # use 0 as default
+        init_R, init_T = torch.tensor([0.8486, 0.0892, 0.0640, 0.5176], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0539, -0.0075,  0.104], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
     elif args.mode == "refine_rt_sequence":
         init_R, init_T = torch.tensor([-0.0212,  0.3816, -0.5622,  0.7335], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0165, -0.1012,  0.2699], dtype=torch.float32, requires_grad=True)
@@ -991,6 +1004,21 @@ if __name__ == '__main__':
         write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_soap_init")
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="obj_only", 
                         resolution_level = 1)
+    elif args.mode == 'render_result_novel_view_full':
+        rt_json_path = Path("debug", "refine_rt_sequence", "out_soap.json")
+        write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_soap_novel")
+        camera_c2w = np.array( [
+            [-0.7837495,   0.4002214,  -0.4749311,   0.35977557],
+            [ 0.61913884,  0.56383735, -0.5465845,   0.48618641],
+            [ 0.04902906, -0.72243357, -0.6896998,   0.74088913],
+            [ 0.0,         0.0,         0.0,         1.0,      ]])
+        intrinsic_mat = np.array([
+        [ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02],
+        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02],
+        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+        ])
+        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
+                        resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat)    
     else:
         train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode")
 """ 
@@ -1002,4 +1030,5 @@ python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.jso
 python genshin_start.py --mode render_result_full --conf ./confs/json/tree_slide.json --image_count 24
 python genshin_start.py --mode render_result_full --conf ./confs/json/soap.json --image_count 21
 python genshin_start.py --mode render_result_full --conf ./confs/json/yoyo_slide.json --image_count 50
+python genshin_start.py --mode render_result_novel_view_full --conf ./confs/json/soap.json --gpu 1 --image_count 21
 """
