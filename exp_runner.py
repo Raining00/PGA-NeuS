@@ -480,22 +480,31 @@ class Runner:
 
     def render_novel_image_with_RTKM(self, post_fix=1, original_mat=None, intrinsic_mat=None, q=None, t=None, img_W=1920, img_H=1080, return_render_out=False, resolution_level=1):
         if q is None or t is None:
-            q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
-            q = [0.8575973040867548 , 0.12052744095487312 , 0.0695865504800327 , 0.4951340343707851]
-            t = [-0.0454,  0.0062,  0.0963]
+            # q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
+            # q = [0, 0, 1, 0] 
+            # t = [0, -0.01, 0.066] # soap1 pose to soap2 pose 
+            # q = [0.9150, -0.2691, -0.1273,  0.2763]
+            # t = [0.1536, -0.1478,  0.3126]  # frame 0 qt calced from soap2 pose (default), IMP: pose2 is the default rendering pose !
+            # q = [0.12746657701903685 , -0.27666154933511306 , 0.9138042514674574 , -0.26945212785406775]
+            # t = [0.13278135983999997 , -0.12696580667999996 , 0.3725301366] # eqv rt for soap1 pose   
+            q = [ 0.6053165197372437, 0.2681955397129059, -0.37045902013778687, 0.6537007689476013]
+            t = [ 0.24793949723243713, 0.6238101124763489, 0.677591860294342] # 20th frame qt for pose2     
         w, x, y, z = q
         if original_mat is None:
             original_mat = np.array(
-[[0.9478352,  -0.176360,   0.2655286,  -0.10285065],
-[-0.31557244, -0.6366862,   0.70359415, -0.7547572],
-[0.04497216, -0.7506848,  -0.65912807,  0.6240542],
-[0.,          0.,          0.,          1.]]
+[
+            [-0.9630855,   0.16514869, -0.21258466,  0.25058863],
+            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
+            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
+            [ 0.0,          0.0,          0.0,          1.0    ]
+        ]
         )
         if intrinsic_mat is None:
             intrinsic_mat = np.array(
- [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
- [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
- [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+[       [ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02],
+        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02],
+        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+        ]
 
             )       
         rotate_mat = np.array([
@@ -511,8 +520,15 @@ class Runner:
         intrinsic_inv = torch.from_numpy(np.linalg.inv(intrinsic_mat).astype(np.float32)).cuda()
         camera_pose = np.array(original_mat)
         transform_matrix = inverse_matrix @ camera_pose
+        # transform_matrix = np.array([
+        #     [0.0433,   0.0397, -0.9953,  0.8153],
+        #     [ 0.9944,  -0.0608,  0.0418,  0.1112],
+        #     [-0.0613, -0.9963, -0.0445,  0.1639],
+        #     [ 0.0,          0.0,          0.0, 1]
+        # ]) # tmp
         self.dataset.W = img_W
         self.dataset.H = img_H
+        print("equivalent c2w mat: \n", transform_matrix)
         # transform_matrix =transform_matrix.astype(np.float32).cuda()
         img, normal = self.render_novel_image_at(transform_matrix, resolution_level=resolution_level, intrinsic_inv=intrinsic_inv)
         # img loss
@@ -520,11 +536,11 @@ class Runner:
         # file_name_with_extension = os.path.basename(setting_json_path)
         # case_name, file_extension = os.path.splitext(file_name_with_extension)
         render_path = os.path.join(self.base_exp_dir, "test_" + str(post_fix) + ".png")
-        print("Saving render img at " + render_path)
         if return_render_out:
             return img
         else:
             cv.imwrite(render_path, img)
+            print("Saving render img at " + render_path)
             return None
 
     def get_runner(neus_conf_path, case_name, is_continue):
@@ -546,7 +562,7 @@ if __name__ == '__main__':
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
-    parser.add_argument('--post_fix', type=int, default=0)
+    parser.add_argument('--post_fix', type=str, default='0')
     parser.add_argument('--resolution_level', type=int, default=1)
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
@@ -586,4 +602,7 @@ python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure.conf --case yoyo --is_continue --gpu 2 --post_fix 1
 python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkgd.conf --case yoyoball --is_continue --gpu 2 --post_fix 6
 python exp_runner.py --mode render_rtkm --conf ./confs/tree_structure_white_bkgd.conf --case tree_original --is_continue --post_fix 0 --resolution_level 6
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 3 --post_fix _ --resolution_level 6
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 2 --post_fix 0 --resolution_level 6
+
 """

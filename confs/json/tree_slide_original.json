@@ -1,0 +1,35 @@
+{
+    "device": "cuda",
+    "static_mesh_path": "./exp/tree_original/womask_white/meshes/tree10k.obj",
+    "neus_object_conf_path": "./confs/tree_structure_white_bkgd.conf",
+    "neus_static_object_name": "tree_original",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/thin_structure.conf",
+    "neus_static_background_name": "slide",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 24,
+    "substep": 10, 
+    "frame_dt": 0.0333333333333333,
+    "collision_threshold": 1e-6,
+    "delta_frame": 3, 
+    "images_path": "./public_data/tree_slide/image",
+    "masks_path": "./public_data/tree_slide/mask",
+    "with_pre_trained_RT": false,
+    "pre_trained_RT": "./debug/refine_rt_sequence/out.json",
+    "image_type": "png",
+    "R0": [0.8486, 0.0892, 0.0640, 0.5176],
+    "T0": [-0.0539, -0.0075,  0.104],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M": 
+        [[0.9478352,  -0.176360,   0.2655286,  -0.10285065],
+        [-0.31557244, -0.6366862,   0.70359415, -0.7547572],
+        [0.04497216, -0.7506848,  -0.65912807,  0.6240542],
+        [0.0,          0.0,          0.0,          1.0]],
+        "K":  
+        [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
+        [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
+        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+    }
+}

@@ -42,7 +42,7 @@ def load_cameras_and_images(images_path, masks_path, camera_params_path, frames_
         with open(camera_params_path, "r") as json_file:
             camera_params_list = json.load(json_file)
     images, masks, cameras_K, cameras_M = [], [], [], []  # cameras_M should be c2w mat
-    for i in range(1, frames_count + 1):
+    for i in range(0, frames_count + 1):
         picture_name = f"{i:03}"
         image_I_path = images_path + "/" + picture_name + "." + pic_mode
         image = cv.imread(image_I_path)
@@ -112,7 +112,7 @@ class GenshinStart(torch.nn.Module):
                   'delta_frame': motion_data['delta_frame'],
                   'substep':motion_data["substep"],
                   'kn': 0.6,
-                  'mu': 0.2,
+                  'mu': 0.1,
                   'translation': motion_data['T0'],
                   'quaterion': motion_data['R0'],
                   'linear_damping': 0.999,
@@ -124,12 +124,22 @@ class GenshinStart(torch.nn.Module):
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
         self.static_object_name = motion_data['neus_static_object_name']
         self.static_object_continue = motion_data['neus_static_object_continue']
-
+        try: # runner_object_additional_pose SHOULD BE A torch tensor
+            self.static_object_name_additional = motion_data['neus_static_object_name_additional']
+            self.runner_object_additional_pose = \
+                torch.from_numpy(np.array(motion_data['neus_static_object_name_additional_pose']).astype(np.float32)).to(self.device)
+        except:
+            print_blink("NO additional pose for render, use the same one")
+            self.static_object_name_additional = motion_data['neus_static_object_name']
+            self.runner_object_additional_pose = torch.from_numpy(np.eye(4).astype(np.float32)).to(self.device) # use an 4x4 I as no RT 
         self.static_background_conf_path = motion_data["neus_background_conf_path"]
         self.static_background_name = motion_data['neus_static_background_name']
         self.static_background_continue = motion_data['neus_static_background_continue']
         self.runner_object = \
             Runner.get_runner(self.static_object_conf_path, self.static_object_name, self.static_object_continue)
+        # assmue using same conf, only has a different name 
+        self.runner_object_additional = \
+            Runner.get_runner(self.static_object_conf_path, self.static_object_name_additional, self.static_object_continue)
         self.runner_background = \
             Runner.get_runner(self.static_background_conf_path, self.static_background_name, self.static_background_continue)
         self.batch_size = motion_data["batch_size"]
@@ -138,6 +148,8 @@ class GenshinStart(torch.nn.Module):
         self.masks_path = motion_data["masks_path"]
         self.camera_setting_path = None
         self.with_fixed_camera = motion_data["with_fixed_camera"]
+        self.motion_R0 = motion_data['R0'],
+        self.motion_T0 = motion_data['T0'],
         camera_params_list = None
         if self.with_fixed_camera:
             camera_params_list = motion_data['fixed_camera_setting']
@@ -162,7 +174,7 @@ class GenshinStart(torch.nn.Module):
     def physical_init(self, options):
         self.substep = options['substep']
         self.frames = options['frames']
-        self.dt = 1.0 / 60.0 / 10
+        self.dt = options['frame_dt'] / self.substep
         self.mesh = trimesh.load_mesh(str(Path(options['mesh'])))
         print('mass_center:{}'.format(self.mesh.center_mass))
         # convert vertices to numpy array
@@ -179,7 +191,7 @@ class GenshinStart(torch.nn.Module):
         # torch tensors
         self.mass_center = torch.tensor(self.mesh.center_mass, dtype=torch.float32)
         self.x = torch.tensor(vertices, dtype=torch.float32, requires_grad=True)
-        for i in range(self.frames * self.substep):
+        for i in range(self.frames * self.substep + 1):
             self.translation.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
             self.quaternion.append(torch.zeros(4, dtype=torch.float32, requires_grad=True))
             self.v.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
@@ -188,7 +200,10 @@ class GenshinStart(torch.nn.Module):
         self.mu = torch.nn.Parameter(torch.tensor([options['mu']], requires_grad=True))
         self.linear_damping = torch.nn.Parameter(torch.tensor([options['linear_damping']]))
         self.angular_damping = torch.nn.Parameter(torch.tensor([options['angular_damping']]))
+
         self.init_v = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, requires_grad=True)
+        self.init_omega = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, requires_grad=True)
+
         self.mass = torch.tensor([0.0], dtype=torch.float32)
         self.inv_mass = torch.tensor([0.0], dtype=torch.float32)
         self.target = torch.tensor([0.0, 0.0, 5.0], dtype=torch.float32)
@@ -228,8 +243,9 @@ class GenshinStart(torch.nn.Module):
     def set_init_v(self):
         with torch.no_grad():
             self.v[0] = self.init_v
+            self.omega[0] = self.init_omega
 
-    def write_out_paras(self, file_path):
+    def write_out_params(self, file_path):
         out_dict = {}
         out_kn = self.kn.detach().clone().cpu().numpy().tolist()
         out_mu = self.mu.detach().clone().cpu().numpy().tolist()
@@ -240,7 +256,9 @@ class GenshinStart(torch.nn.Module):
                 out_dict[str(i // self.substep) + "_R"] = (self.quaternion[i].detach().clone().cpu().numpy().tolist())
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
-        out_dict['init_V'] = self.init_v.detach().clone().cpu().numpy().tolist()
+        out_dict['out_v'] = self.v[self.frames * self.substep - 1].detach().clone().cpu().numpy().tolist()
+        out_dict['out_omega'] = self.omega[self.frames * self.substep - 1].detach().clone().cpu().numpy().tolist()
+
         # out_dict['out_r'] = out_r
         # out_dict['out_t'] = out_t
         dir_path = os.path.dirname(file_path)
@@ -293,6 +311,44 @@ class GenshinStart(torch.nn.Module):
         return torch.tensor([[1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * w * z, 2 * x * z + 2 * w * y],
                       [2 * x * y + 2 * w * z, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * w * x],
                       [2 * x * z - 2 * w * y, 2 * y * z + 2 * w * x, 1 - 2 * x * x - 2 * y * y]])
+    def matrix_to_quad(self, R):
+        """
+        Convert a rotation matrix into a quaternion.
+        Parameters:
+        - R: A 3x3 rotation matrix.
+        Returns:
+        - q: A quaternion [qw, qx, qy, qz] as a torch tensor
+        """
+        # Assume R is for calculations
+        # Allocate space for the quaternion
+        q = torch.empty((4,), dtype=torch.float32)
+        # Compute the trace of the matrix
+        tr = R.trace()
+        if tr > 0:
+            S = torch.sqrt(tr + 1.0) * 2  # S=4*qw
+            q[0] = 0.25 * S
+            q[1] = (R[2, 1] - R[1, 2]) / S
+            q[2] = (R[0, 2] - R[2, 0]) / S
+            q[3] = (R[1, 0] - R[0, 1]) / S
+        elif (R[0, 0] > R[1, 1]) and (R[0, 0] > R[2, 2]):
+            S = torch.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2  # S=4*qx
+            q[0] = (R[2, 1] - R[1, 2]) / S
+            q[1] = 0.25 * S
+            q[2] = (R[0, 1] + R[1, 0]) / S
+            q[3] = (R[0, 2] + R[2, 0]) / S
+        elif R[1, 1] > R[2, 2]:
+            S = torch.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2  # S=4*qy
+            q[0] = (R[0, 2] - R[2, 0]) / S
+            q[1] = (R[0, 1] + R[1, 0]) / S
+            q[2] = 0.25 * S
+            q[3] = (R[1, 2] + R[2, 1]) / S
+        else:
+            S = torch.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2  # S=4*qz
+            q[0] = (R[1, 0] - R[0, 1]) / S
+            q[1] = (R[0, 2] + R[2, 0]) / S
+            q[2] = (R[1, 2] + R[2, 1]) / S
+            q[3] = 0.25 * S
+        return torch.tensor(q, dtype=torch.float32, requires_grad=True)
     
     def quat_inverse(self, q):
         return self.quat_conjugate(q) / torch.norm(q)
@@ -430,9 +486,25 @@ class GenshinStart(torch.nn.Module):
         sdf = self.runner_background.sdf_network.sdf(pts).contiguous()
         sdf_grad = self.runner_background.sdf_network.gradient(pts).squeeze().contiguous()
         return sdf, sdf_grad
+    
+    def calc_equivalent_camera_position(self, R, T, camera_c2w):
+        _, transform_matrix_inv = self.get_transform_matrix(quaternion=R, translation=T)
+        calc_equ_c2w = torch.matmul(transform_matrix_inv, camera_c2w)
+        return calc_equ_c2w
+    
+    def calc_RT_in_additional_pose(self, R, T): # calc the specific Rt for additional pose NeuS with 
+        # assume addtional transform mat is known(the transform from additional pose to original pose)
+        trans_mat, _ = self.get_transform_matrix(quaternion=R, translation=T)
+        # trans_mat = torch.matmul(trans_mat, self.runner_object_additional_pose) #left mul
+        trans_mat = torch.matmul(trans_mat, self.runner_object_additional_pose) #left mul
+        new_R, new_T = self.matrix_to_quad(trans_mat[:3, :3]), trans_mat[:3, 3]
+        return new_R, new_T 
 
-    def forward(self, max_f: int, vis_folder=None, write_out_flag=False, train_mode="rt_mode"):
-        pbar = trange(1, max_f)
+    def forward(self, frame_start: int, frame_end: int, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
+        if frame_start == 0:
+            frame_start = 1
+        pbar = trange(frame_start, frame_end + 1)
+        max_f = frame_end - frame_start + 1
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
         print('optimizer init v = ', self.init_v)
@@ -450,21 +522,33 @@ class GenshinStart(torch.nn.Module):
                     rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
                 rays_sum = len(rays_o)
                 debug_rgb = []
+                print(self.translation[f + 1])
                 # count = 0
                 for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size),
                                                                     rays_d.split(self.batch_size),
                                                                     rays_gt.split(self.batch_size)):
-                    # count += 1
                     near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
                     background_rgb = None
                     # this render out contains grad & img loss, find out its reaction with phy simualtion
                     # start_time = time.time()
-                    render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                    pre_calc_c2w = self.calc_equivalent_camera_position(R=self.quaternion[f + 1].clone(), T=self.quaternion[f + 1].clone(), camera_c2w=orgin_mat_c2w.clone())
+                    if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
+                        # use the default neus render
+                        render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                             near=near, far=far,
-                                                                            R=self.quaternion[f + 1], T=self.translation[f + 1],
+                                                                            T=self.translation[f + 1], R=self.quaternion[f + 1],
                                                                             camera_c2w=orgin_mat_c2w,
                                                                             cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
-                                                                            background_rgb=background_rgb)         
+                                                                            background_rgb=background_rgb)
+                    else : # use the additional pose
+                        # calc equivalent RT for this additional pose
+                        new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
+                        render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                            near=near, far=far,
+                                                                            T=new_T, R=new_R,
+                                                                            camera_c2w=orgin_mat_c2w,
+                                                                            cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                            background_rgb=background_rgb)       
                     # end_time = time.time()   
                     # execution_time = end_time - start_time
                     # print("excution time ", execution_time, " sec")   
@@ -474,7 +558,7 @@ class GenshinStart(torch.nn.Module):
                     debug_rgb.append(color_fine.clone().detach().cpu().numpy())
                     color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),
                                                 reduction='sum') / rays_sum / max_f  # normalize
-                    global_loss += color_fine_loss.clone().detach()
+                    global_loss = global_loss + color_fine_loss.clone().detach()
                     color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
                     torch.cuda.synchronize()
                     del render_out
@@ -527,12 +611,24 @@ class GenshinStart(torch.nn.Module):
                                                                     rays_gt.split(self.batch_size)):
                         near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
                         background_rgb = None
-                        render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                        pre_calc_c2w = self.calc_equivalent_camera_position(R=self.quaternion[f + 1], T=self.translation[f + 1], camera_c2w=orgin_mat_c2w)
+                        if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
+                            # use the default neus render
+                            render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                                 near=near, far=far,
-                                                                                R=self.quaternion[f + 1], T=self.translation[f + 1],
+                                                                                T=self.translation[f + 1], R=self.quaternion[f + 1],
                                                                                 camera_c2w=orgin_mat_c2w,
                                                                                 cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
-                                                                                background_rgb=background_rgb)         
+                                                                                background_rgb=background_rgb)
+                        else : # use the additional pose
+                            # calc equivalent RT for this additional pose
+                            new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
+                            render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                                near=near, far=far,
+                                                                                T=new_T, R=new_R,
+                                                                                camera_c2w=orgin_mat_c2w,
+                                                                                cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                                background_rgb=background_rgb)      
                         color_fine = render_out["color_fine"]
                         debug_rgb.append(color_fine.clone().detach().cpu().numpy())
                         torch.cuda.synchronize()
@@ -593,25 +689,57 @@ class GenshinStart(torch.nn.Module):
     def refine_RT(self, image_id = 0, vis_folder=None, iter_id=-1, write_out_result=True):
         # this function is used to refine RT to fit the initial dynamic scene (as frame 0)
         global_loss = 0
-        orgin_mat_c2w = torch.from_numpy(self.cameras_M[image_id].astype(np.float32)).to(self.device)
-        rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[image_id], self.rays_mask_all[image_id], self.rays_o_all[image_id], self.rays_v_all[image_id]
-        rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
-            rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
+        if image_id == -1:
+            print("Refining initial RT because input image id is -1")
+            orgin_mat_c2w = torch.from_numpy(self.cameras_M[0].astype(np.float32)).to(self.device) # assume the camera is fixed
+            camera_K = torch.from_numpy(self.cameras_K[0].astype(np.float32)).to(self.device)
+            rays_o, rays_d = generate_rays_with_K_and_M(camera_c2w = orgin_mat_c2w, intrinsic_mat=camera_K, W=1920, H=1080, resolution_level=1)
+            picture_name = "000.png"#read 000 image and mask, store to GPU
+            image_path_0th = self.images_path + "/" + picture_name
+            mask_path_0th = self.masks_path + "/" + picture_name
+            rays_gt, rays_mask = cv.imread(image_path_0th), cv.imread(mask_path_0th)
+            rays_gt = rays_gt / 256.0
+            rays_gt = rays_gt.reshape(-1, 3)
+            rays_gt = torch.from_numpy(rays_gt.astype(np.float32)).to("cuda")
+            rays_mask = rays_mask / 255.0
+            rays_mask = np.where(rays_mask > 0, 1, 0).reshape(-1, 3)
+            rays_mask = torch.from_numpy(rays_mask.astype(np.bool_)).to("cuda")
+        else :
+            orgin_mat_c2w = torch.from_numpy(self.cameras_M[image_id].astype(np.float32)).to(self.device)
+            rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[image_id], self.rays_mask_all[image_id], self.rays_o_all[image_id], self.rays_v_all[image_id]
+        
+        rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
         rays_sum = len(rays_o)
         debug_rgb = []
         for rays_o_batch, rays_d_batch, rays_gt_batch in zip(rays_o.split(self.batch_size), rays_d.split(self.batch_size), rays_gt.split(self.batch_size)):
             near, far = self.runner_object.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
             background_rgb = None
-            render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
-                                                                    near=near, far=far, R=self.raw_quaternion, T=self.raw_translation,
+            pre_calc_c2w = self.calc_equivalent_camera_position(R=self.raw_quaternion, T=self.raw_translation, camera_c2w=orgin_mat_c2w)
+            # print("equivalent c2w mat: \n", pre_calc_c2w.clone().detach().cpu())
+            # import pdb; pdb.set_trace();
+            if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
+                # use the default neus render
+                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                    near=near, far=far,
+                                                                    T=self.raw_translation, R=self.raw_quaternion,
                                                                     camera_c2w=orgin_mat_c2w,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
-                                                                    background_rgb=background_rgb)    
+                                                                    background_rgb=background_rgb)
+            else : # use the additional pose
+                # calc equivalent RT for this additional pose
+                print("run with additional pose rendering")
+                new_R, new_T = self.calc_RT_in_additional_pose(T=self.raw_translation, R=self.raw_quaternion)
+                render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                    near=near, far=far,
+                                                                    T=new_T, R=new_R,
+                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                    background_rgb=background_rgb)
             color_fine = render_out["color_fine"]
             color_error = (color_fine - rays_gt_batch)
             debug_rgb.append(color_fine.clone().detach().cpu().numpy())
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),reduction='sum') / rays_sum  # normalize
-            global_loss += color_fine_loss.clone().detach()
+            global_loss = global_loss + color_fine_loss.clone().detach()
             color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
             torch.cuda.synchronize()
             del render_out
@@ -714,9 +842,21 @@ class GenshinStart(torch.nn.Module):
             background_rgb = None
             object_color_fine, object_depth_fine, backgorund_color_fine, background_depth_fine = [], [], [], []
             # this render out contains grad & img loss, find out its reaction with phy simualtion
-            render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+            pre_calc_c2w = self.calc_equivalent_camera_position(R=quaternion, T=translation, camera_c2w=orgin_mat_c2w)
+            if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
+                # use the default neus render
+                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
                                                                     T=translation, R=quaternion,
+                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                    background_rgb=background_rgb)
+            else : # use the additional pose
+                # calc equivalent RT for this additional pose
+                new_R, new_T = self.calc_RT_in_additional_pose(T=translation, R=quaternion)
+                render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                    near=near, far=far,
+                                                                    T=new_T, R=new_R,
                                                                     camera_c2w=orgin_mat_c2w,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
@@ -767,9 +907,21 @@ class GenshinStart(torch.nn.Module):
             background_rgb = None
             object_color_fine, object_depth_fine, backgorund_color_fine, background_depth_fine = [], [], [], []
             # this render out contains grad & img loss, find out its reaction with phy simualtion
-            render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+            pre_calc_c2w = self.calc_equivalent_camera_position(R=quaternion, T=translation, camera_c2w=orgin_mat_c2w)
+            if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
+                # use the default neus render
+                render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
                                                                     T=translation, R=quaternion,
+                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
+                                                                    background_rgb=background_rgb)
+            else : # use the additional pose
+                # calc equivalent RT for this additional pose
+                new_R, new_T = self.calc_RT_in_additional_pose(T=translation, R=quaternion)
+                render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
+                                                                    near=near, far=far,
+                                                                    T=new_T, R=new_R,
                                                                     camera_c2w=orgin_mat_c2w,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
@@ -811,48 +963,70 @@ def get_optimizer(mode, genshinStart):
                 {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-1}
             ]
         )
-    elif mode == "train_dynamic":
+    elif mode == "train_dynamic_init":
         optimizer = torch.optim.Adam(
             [
                 {'params': getattr(genshinStart, 'mu'), 'lr': 1e-2},
                 {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2},
-                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-3}
-            ],
+                {"params": getattr(genshinStart, 'init_v'), 'lr': 1e-2},
+                {'params': getattr(genshinStart, "init_omega"), 'lr': 1e-2}
+            ]
+            ,
+            amsgrad=False
+        )
+    elif mode == 'train_dynamic':
+        optimizer = torch.optim.Adam(
+            [
+                {'params': getattr(genshinStart, 'mu'), 'lr': 1e-2},
+                {'params': getattr(genshinStart, 'kn'), 'lr': 1e-2},
+            ]
+            ,
             amsgrad=False
         )
     elif mode == "refine_rt":
         optimizer = torch.optim.Adam(
             [
                 {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-3},
-                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-3},
+                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-2},
             ],
             amsgrad=False
         )
     return optimizer
 
-def train_dynamic(max_f, iters, genshinStart, write_out_flag=False, train_mode="rt_mode"):
-    def train_forward(vis_folder= None):
-        # genshinStart.optimizer.zero_grad()
-        if vis_folder  != None:
+
+def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=False, train_mode="pic_mode"):
+    def train_forward(optimizer, vis_folder=None, frame_start=1, frame_end=max_f, train_mode="pic_mode"):
+        optimizer.zero_grad()
+        if vis_folder is not None and write_out_flag:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
         loss = torch.tensor(np.nan)
         while loss.isnan():
-            loss = genshinStart.forward(max_f, vis_folder, write_out_flag=write_out_flag, train_mode=train_mode)
+            loss = genshinStart.forward(frame_start=frame_start, frame_end=frame_end, vis_folder=vis_folder, train_mode=train_mode, write_out_flag=write_out_flag)
         return loss
-    
-    optimizer = get_optimizer('train_dynamic', genshinStart=genshinStart)
-    for i in range(iters):
-        genshinStart.set_init_v()
-        optimizer.zero_grad()
-        loss = train_forward(vis_folder=Path('train_dynamic_' + train_mode) / ('iter_' + str(i)))
-        if loss.norm() < 1e-3:
-            break
-        # genshinStart.optimizer.step()
-        optimizer.step()
-        out_json_path = "./train_dynamic_" + train_mode + "/out_jsons/" + str(i) + ".json"
-        genshinStart.write_out_paras(out_json_path)
-        print('mu: {}, kn: {}'.format(genshinStart.mu, genshinStart.kn))
+    frame_start = 1
+    while frame_start < max_f:
+        frame_end = min(frame_start + splite_range - 1, max_f)
+        if frame_start == 1:
+            optimizer = get_optimizer('train_dynamic_init', genshinStart)
+        else:
+            optimizer = get_optimizer('train_dynamic', genshinStart)
+        for i in range(iters):
+            if frame_start == 1:
+                genshinStart.set_init_v()
+            if write_out_flag:
+                vis_folder =Path('train_dynamic') / ('iter_' + str(i))
+            else:
+                vis_folder = None
+            loss = train_forward(optimizer=optimizer, vis_folder=vis_folder,
+                                frame_start=frame_start, frame_end=frame_end, train_mode=train_mode)
+            if loss.norm() < 1e-3:
+                break
+            optimizer.step()
+            out_json_path = "./train_dynamic/out_jsons/" + str(i) + ".json"
+            genshinStart.write_out_params(out_json_path)
+        print_blink('mu: {}, kn: {}, init_v: {}, init_omg: {}'.format(genshinStart.mu, genshinStart.kn, genshinStart.init_v, genshinStart.init_omega))
+        frame_start = frame_end
         
 def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=False, image_id=0):
     def refine_rt_forward(optimizer, vis_folder= None, iter_id=-1):
@@ -863,7 +1037,6 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
         loss = genshinStart.refine_RT(vis_folder=vis_folder, iter_id=iter_id, image_id=image_id)
 
         return loss    
-    import  pdb;
     if require_init: # not set init rt for the first loop, need init
             if init_R is None or init_T is None:
                 init_R, init_T = [], []  # should be len(4) and len(3) array 
@@ -880,13 +1053,13 @@ def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=Fa
             break
         optimizer.step()
         out_json_path = "./debug/refine_rt_single/out_jsons/" + str(i) + ".json"
-        genshinStart.write_out_paras(out_json_path)
+        genshinStart.write_out_params(out_json_path)
         print('raw_translation: {}, raw_quaternion: {}, loss: {}'.format(genshinStart.raw_translation, genshinStart.raw_quaternion, loss.norm()))
     return
 
     """this function is used to call refine_RT function for calculating a set of RT in dynamic video sequence
     this function requires the lenth of the input image sequence to finish RT calculation"""
-def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init_T=None, write_out_folder=None, start_idx=0):
+def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init_T=None, write_out_folder=None, start_idx=0, init_json_path=None):
     def refine_rt_forward(optimizer, image_id=0, vis_folder= None, iter_id=-1):
         optimizer.zero_grad()
         if vis_folder != None:
@@ -895,11 +1068,25 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
         loss = genshinStart.refine_RT(image_id=image_id, vis_folder=vis_folder, iter_id=iter_id, write_out_result=True)
         return loss   
     refined_RT_in_sequence = {} # store result json
+    if init_R is None or init_T is None: # set RT from R0 T0 
+        init_R, init_T = genshinStart.motion_R0, genshinStart.motion_T0
+        # import pdb; pdb.set_trace();
+        init_R, init_T = torch.tensor(init_R[0], dtype=torch.float32, requires_grad=True), torch.tensor(init_T[0], dtype=torch.float32, requires_grad=True)
+        print(init_R, init_T)
+    use_init_json, init_RT_from_json = False, None
+    if init_json_path is not None:
+        with open(init_json_path, "r") as json_file:
+            init_RT_from_json = json.load(json_file)
+            use_init_json = True
     for image_id in range(start_idx, sequence_length):
         # refine image_id th image
         optimizer = get_optimizer('refine_rt', genshinStart=genshinStart)
         if image_id == start_idx:
             genshinStart.raw_translation, genshinStart.raw_quaternion = init_T, init_R # only the first frame needs to init
+        if use_init_json: # use_init_json to replace raw_translation from previous frame
+            # assume the init json includes as following: {0_T, 0_R ... x_T, x_R} with the same level
+            genshinStart.raw_translation, genshinStart.raw_quaternion = \
+                torch.tensor(init_RT_from_json[str(image_id)+"_T"], dtype=torch.float32, requires_grad=True), torch.tensor(init_RT_from_json[str(image_id)+"_R"], dtype=torch.float32, requires_grad=True)
         for i in range(iters):
             genshinStart.set_init_v()
             if write_out_folder is not None:
@@ -917,6 +1104,10 @@ def refine_RT_seqnuece(genshinStart, sequence_length, iters=1, init_R=None, init
         refined_RT_in_sequence[tmp_name + "R"] = genshinStart.raw_quaternion.detach().cpu().numpy().tolist()
         refined_RT_in_sequence[tmp_name + "T"] = genshinStart.raw_translation.detach().cpu().numpy().tolist()
         print("new RT after refine " + str(refined_RT_in_sequence[tmp_name + "R"]) + " " + str(refined_RT_in_sequence[tmp_name + "T"]))
+        if write_out_folder is not None: # write out result
+            result_json_path= str(write_out_folder) + str("/out.json")
+            with open(result_json_path, "w") as f:
+                json.dump(refined_RT_in_sequence, f, indent=4)       
     if write_out_folder is not None: # write out result
         result_json_path= str(write_out_folder) + str("/out.json")
         with open(result_json_path, "w") as f:
@@ -947,11 +1138,12 @@ def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, re
         quaternion = torch.tensor(quaternion, dtype=torch.float32)
         if render_option == "full":
             print("**************rendering full training view image using depth calculation womask*********************")
-            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index) # make sure c2w is null
+            render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion,
+                                                                  image_index=index, resolution_level=resolution_level) # make sure c2w is null
         elif render_option == "novel":
             print("**************rendering full novel view image using depth calculation womask************************")
             render_out_rgb, _, _ = genshinStart.render_with_depth(translation=translation, quaternion=quaternion, image_index=index
-                                                                  , camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat)
+                                                                  , camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, resolution_level=resolution_level)
         else:
             print("**************only rendering the object without mask constrain**************************************")
             original_mat = genshinStart.cameras_M[0]
@@ -970,6 +1162,7 @@ if __name__ == '__main__':
     print_blink('Genshin Nerf, start!!!')
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     torch.set_default_dtype(torch.float32)
+    torch.autograd.set_detect_anomaly(True)
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
@@ -977,7 +1170,7 @@ if __name__ == '__main__':
     parser.add_argument('--conf', type=str, default='./confs/json/base.json')
     parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--image_id', type=int, default=0)
+    parser.add_argument('--image_id', type=int, default=-1)
     parser.add_argument('--image_count', type=int, default=1)
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
@@ -986,12 +1179,17 @@ if __name__ == '__main__':
     if args.mode == "train":
         train_dynamic()
     elif args.mode == "refine_rt":
-        init_R, init_T = torch.tensor([0.8486, 0.0892, 0.0640, 0.5176], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0539, -0.0075,  0.104], dtype=torch.float32, requires_grad=True) # use 0 as default
-        refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=100)
+        init_R, init_T = torch.tensor([0.7209, 0.6176, 0.2933, 0.1110], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0685, -0.1892,  0.3417], dtype=torch.float32, requires_grad=True) # use 0 as default
+        refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=200)
     elif args.mode == "refine_rt_sequence":
-        init_R, init_T = torch.tensor([-0.0212,  0.3816, -0.5622,  0.7335], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0165, -0.1012,  0.2699], dtype=torch.float32, requires_grad=True)
-        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 15, write_out_folder=Path("debug", "refine_rt_sequence"), iters=150)
+        init_R, init_T = torch.tensor([0.8755663633346558, -0.4348706603050232, -0.21858350932598114, -0.014228791929781437], dtype=torch.float32, requires_grad=True), torch.tensor([0.08080785721540451, 0.031145166605710983, 0.1691053956747055], dtype=torch.float32, requires_grad=True)
+        # init_R, init_T = None, None # use none means system would apply R0 T0 in conf
+        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 35, write_out_folder=Path("debug", "refine_rt_sequence_200_soap_sub"), iters=200)
         # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=None, iters=50)
+    elif args.mode == "refine_rt_sequence_with_init_json":
+        init_json_path = "./train_dynamic/68.json" # need to be specific in bash in the future
+        refine_RT_seqnuece(genshinStart=genshinStart, write_out_folder=Path("debug", "refine_rt_sequence_200_tree_joyo_with_phy_init"), sequence_length = 15, iters=200)
+        
     elif args.mode == 'render_with_depth':
         init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
@@ -1000,10 +1198,10 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "refine_rt_sequence", "out_soap_init.json")
-        write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_soap_init")
-        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="obj_only", 
-                        resolution_level = 1)
+        rt_json_path = Path("debug", "refine_rt_sequence_200_tree_joyo_with_phy_init", "out.json")
+        write_out_dir = Path("debug", "render_result_sequence_for_tree_joyo_with_phy_init")
+        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="full", 
+                        resolution_level = 10)
     elif args.mode == 'render_result_novel_view_full':
         rt_json_path = Path("debug", "refine_rt_sequence", "out_soap.json")
         write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_soap_novel")
@@ -1020,11 +1218,12 @@ if __name__ == '__main__':
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
                         resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat)    
     else:
-        train_dynamic(genshinStart.frame_counts, iters=1000, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode")
+        train_dynamic(genshinStart.frame_counts, splite_range=10, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt_sequence --conf ./confs/json/nahida.json
+python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/tree_joyo_original.json --gpu 3
 python genshin_start.py --mode render_with_depth --conf ./confs/json/nahida.json --gpu 0
 python genshin_start.py --mode render_result_full --conf ./confs/json/nahida.json --gpu 3
 python genshin_start.py --mode render_result_full --conf ./confs/json/tree_slide.json --image_count 24
