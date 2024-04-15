@@ -1,0 +1,43 @@
+{
+    "device": "cuda",
+    "static_background_path": "",
+    "static_mesh_path": "./exp/soap2_merge/womask_white/meshes/soap_merge.obj",
+    "neus_object_conf_path": "./confs/thin_structure_white_bkgd.conf",
+    "neus_static_object_name": "soap2_merge",
+    "neus_static_object_name_additional": "soap1_merge",
+    "neus_static_object_name_additional_pose":
+    [[-1.0, 0.0, 0.0, 0],
+    [0.0, 1.0, 0.0, -0.01],
+    [0.0, 0.0, -1.0, 0.066],
+    [0.0, 0.0, 0.0, 1.0]],
+
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/thin_structure.conf",
+    "neus_static_background_name": "scene1",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 35,
+    "substep": 10, 
+    "frame_dt": 0.0166667,
+    "delta_frame": 3, 
+    "images_path": "./public_data/soap_geo_sub/image",
+    "masks_path": "./public_data/soap_geo_sub/mask",
+    "pre_trained_RT": "./confs/json/out_refine_RT_soap_geo.json",
+    "image_type": "png",
+    "R0": [0.8755663633346558, -0.4348706603050232, -0.21858350932598114, -0.014228791929781437],
+    "T0": [0.08080785721540451, 0.031145166605710983, 0.1691053956747055],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M": [
+            [-0.9630855,   0.16514869, -0.21258466,  0.25058863],
+            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
+            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
+            [ 0.0,          0.0,          0.0,          1.0    ]
+        ],
+        "K": [
+        [ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02],
+        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02],
+        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+        ]
+    }
+}

@@ -480,32 +480,29 @@ class Runner:
 
     def render_novel_image_with_RTKM(self, post_fix=1, original_mat=None, intrinsic_mat=None, q=None, t=None, img_W=1920, img_H=1080, return_render_out=False, resolution_level=1):
         if q is None or t is None:
-            # q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
+            q, t = [1, 0, 0, 0], [0, 0, 0] # this is a default setting
             # q = [0, 0, 1, 0] 
             # t = [0, -0.01, 0.066] # soap1 pose to soap2 pose 
             # q = [0.9150, -0.2691, -0.1273,  0.2763]
             # t = [0.1536, -0.1478,  0.3126]  # frame 0 qt calced from soap2 pose (default), IMP: pose2 is the default rendering pose !
             # q = [0.12746657701903685 , -0.27666154933511306 , 0.9138042514674574 , -0.26945212785406775]
             # t = [0.13278135983999997 , -0.12696580667999996 , 0.3725301366] # eqv rt for soap1 pose   
-            q = [ 0.6053165197372437, 0.2681955397129059, -0.37045902013778687, 0.6537007689476013]
-            t = [ 0.24793949723243713, 0.6238101124763489, 0.677591860294342] # 20th frame qt for pose2     
+            # q = [ 0.6053165197372437, 0.2681955397129059, -0.37045902013778687, 0.6537007689476013]
+            # t = [ 0.24793949723243713, 0.6238101124763489, 0.677591860294342] # 20th frame qt for pose2
+            # q, t = [0.9535, 0.0949, 0.0505, 0.3365], [-0.2356, 0.162, 0.0834]
         w, x, y, z = q
         if original_mat is None:
             original_mat = np.array(
-[
-            [-0.9630855,   0.16514869, -0.21258466,  0.25058863],
-            [ 0.26681232,  0.6904637,  -0.67236227,  0.668197  ],
-            [ 0.03574226, -0.70426255, -0.70903933,  0.81590825],
-            [ 0.0,          0.0,          0.0,          1.0    ]
-        ]
+[[0.9478352,  -0.176360,   0.2655286,  -0.10285065],
+        [-0.31557244, -0.6366862,   0.70359415, -0.7547572],
+        [0.04497216, -0.7506848,  -0.65912807,  0.6240542],
+        [0.0,          0.0,          0.0,          1.0]]
         )
         if intrinsic_mat is None:
             intrinsic_mat = np.array(
-[       [ 1.73233789e+03, -1.60940567e-06,  9.32415100e+02],
-        [ 0.00000000e+00,  1.69510364e+03,  5.22351501e+02],
-        [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
-        ]
-
+        [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
+        [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
+        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
             )       
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -604,5 +601,6 @@ python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkg
 python exp_runner.py --mode render_rtkm --conf ./confs/tree_structure_white_bkgd.conf --case tree_original --is_continue --post_fix 0 --resolution_level 6
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 3 --post_fix _ --resolution_level 6
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 2 --post_fix 0 --resolution_level 6
+python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkgd.conf --case yoyo_original_man_min --is_continue --post_fix 0 --resolution_level 6
 
 """
