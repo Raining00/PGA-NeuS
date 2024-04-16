@@ -173,7 +173,7 @@ class GenshinStart(torch.nn.Module):
     
     def physical_init(self, options):
         self.substep = options['substep']
-        self.frames = options['frames']
+        self.frames = options['split_range']
         self.dt = options['frame_dt'] / self.substep
         self.mesh = trimesh.load_mesh(str(Path(options['mesh'])))
         print('mass_center:{}'.format(self.mesh.center_mass))
@@ -185,8 +185,6 @@ class GenshinStart(torch.nn.Module):
         self.quaternion = []
         self.v = []
         self.omega = []
-        self.collision_net = CollisionResponseNet()
-        # self.optimizer = torch.optim.Adam(self.collision_net.parameters(), lr=1e-3)
 
         # torch tensors
         self.mass_center = torch.tensor(self.mesh.center_mass, dtype=torch.float32)
@@ -222,6 +220,26 @@ class GenshinStart(torch.nn.Module):
         self.set_init_translation(options['translation'])
         # self.set_init_quaternion_from_euler(options['transform'][3:6])
         self.set_init_quaternion(options['quaterion'])
+    
+    def physical_re_init(self):
+        last_translation = self.translation[-1].detach().clone().cpu().numpy()
+        last_quaternion = self.quaternion[-1].detach().clone().cpu().numpy()
+        last_v = self.v[-1].detach().clone().cpu().numpy()
+        last_omega = self.omega[-1].detach().clone().cpu().numpy()
+
+        self.translation = []
+        self.quaternion = []
+        self.v = []
+        self.omega = []
+        for i in range(self.frames * self.substep + 1):
+            self.translation.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
+            self.quaternion.append(torch.zeros(4, dtype=torch.float32, requires_grad=True))
+            self.v.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
+            self.omega.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
+        self.translation[0] = torch.tensor(last_translation, dtype=torch.float32, requires_grad=True)
+        self.quaternion[0] = torch.tensor(last_quaternion, dtype=torch.float32, requires_grad=True)
+        self.v[0] = torch.tensor(last_v, dtype=torch.float32, requires_grad=True)
+        self.omega[0] = torch.tensor(last_omega, dtype=torch.float32, requires_grad=True)
 
     def add_planar_contact(self, slope_degree, init_height):
         self.c = np.cos(np.deg2rad(slope_degree))
@@ -504,11 +522,8 @@ class GenshinStart(torch.nn.Module):
         # import pdb; pdb.set_trace();
         return new_R, new_T 
 
-    def forward(self, frame_start: int, frame_end: int, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
-        if frame_start == 0:
-            frame_start = 1
-        pbar = trange(frame_start, frame_end + 1)
-        max_f = frame_end - frame_start + 1
+    def forward(self, max_f, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
+        pbar = trange(max_f)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
         print('optimizer init v = ', self.init_v)
@@ -1038,6 +1053,7 @@ def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=Fal
             print("Epoh ", str(i))
             print_blink('mu: {}, kn: {}, init_v: {}, init_omg: {}'.format(genshinStart.mu, genshinStart.kn, genshinStart.init_v, genshinStart.init_omega))
         frame_start = frame_end
+        genshinStart.physical_re_init()
 
             
 def refine_RT(genshinStart, iters=100, init_R=None, init_T=None, require_init=False, image_id=0):
