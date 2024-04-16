@@ -113,6 +113,7 @@ class GenshinStart(torch.nn.Module):
                   'substep':motion_data["substep"],
                   'kn': 0.8,
                   'mu': 0.3,
+                  'split_range': motion_data['split_range'],
                   'translation': motion_data['T0'],
                   'quaterion': motion_data['R0'],
                   'linear_damping': 0.999,
@@ -1021,14 +1022,14 @@ def get_optimizer(mode, genshinStart):
 
 
 def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=False, train_mode="pic_mode", post_fix=""):
-    def train_forward(optimizer, vis_folder=None, frame_start=1, frame_end=max_f, train_mode="pic_mode"):
+    def train_forward(optimizer, vis_folder=None, split_range=5, train_mode="pic_mode"):
         optimizer.zero_grad()
         if vis_folder is not None and write_out_flag:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
         loss = torch.tensor(np.nan)
         while loss.isnan():
-            loss = genshinStart.forward(frame_start=frame_start, frame_end=frame_end, vis_folder=vis_folder, train_mode=train_mode, write_out_flag=write_out_flag)
+            loss = genshinStart.forward(max_f = split_range,vis_folder=vis_folder, train_mode=train_mode, write_out_flag=write_out_flag)
         return loss
     frame_start = 1
     while frame_start < max_f:
@@ -1045,7 +1046,7 @@ def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=Fal
             else:
                 vis_folder = None
             loss = train_forward(optimizer=optimizer, vis_folder=vis_folder,
-                                frame_start=frame_start, frame_end=frame_end, train_mode=train_mode)
+                                split_range=splite_range, train_mode=train_mode)
             if loss.norm() < 1e-3:
                 break
             optimizer.step()

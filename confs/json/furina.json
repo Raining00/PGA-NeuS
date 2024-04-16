@@ -10,7 +10,7 @@
     "neus_static_background_continue": true,
     "batch_size": 512,
     "frame_counts": 18,
-    "split_range": 5,
+    "split_range": 10,
     "substep": 10, 
     "frame_dt": 0.0166667,
     "delta_frame": 3, 
