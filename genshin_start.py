@@ -173,7 +173,8 @@ class GenshinStart(torch.nn.Module):
     
     def physical_init(self, options):
         self.substep = options['substep']
-        self.frames = options['split_range']
+        self.frames = options['frames']
+        self.split_range = options['split_range']
         self.dt = options['frame_dt'] / self.substep
         self.mesh = trimesh.load_mesh(str(Path(options['mesh'])))
         print('mass_center:{}'.format(self.mesh.center_mass))
@@ -189,7 +190,7 @@ class GenshinStart(torch.nn.Module):
         # torch tensors
         self.mass_center = torch.tensor(self.mesh.center_mass, dtype=torch.float32)
         self.x = torch.tensor(vertices, dtype=torch.float32, requires_grad=True)
-        for i in range(self.frames * self.substep + 1):
+        for i in range(self.split_range * self.substep + 1):
             self.translation.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
             self.quaternion.append(torch.zeros(4, dtype=torch.float32, requires_grad=True))
             self.v.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
@@ -231,7 +232,7 @@ class GenshinStart(torch.nn.Module):
         self.quaternion = []
         self.v = []
         self.omega = []
-        for i in range(self.frames * self.substep + 1):
+        for i in range(self.split_range * self.substep + 1):
             self.translation.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
             self.quaternion.append(torch.zeros(4, dtype=torch.float32, requires_grad=True))
             self.v.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
