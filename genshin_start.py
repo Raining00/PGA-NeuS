@@ -609,7 +609,7 @@ class GenshinStart(torch.nn.Module):
                 if vis_folder !=None and write_out_flag:
                     cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
                 pbar.set_description(f"[Forward] loss: {global_loss.item()}")
-                self.export_mesh(f + 1)
+                self.export_mesh(f + 1, vis_folder=vis_folder.parent)
             else:
                 gt_R, gt_T = self.pretrained_R[i], self.pretrained_T[i]
                 weight_R, weight_T = 1.0 / 2, 1.0 / 2
@@ -629,7 +629,7 @@ class GenshinStart(torch.nn.Module):
                 loss = (weight_T * loss_translation + weight_R * loss_quaternion) # self.frame_counts
                 loss.backward(retain_graph=True)
                 # self.optimizer.step()
-                self.export_mesh(f + 1, vis_folder=vis_folder)
+                self.export_mesh(f + 1, vis_folder=vis_folder.parent)
                 if write_out_flag and vis_folder is not None: # write out debug image
                     rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], self.rays_v_all[i]
                     rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
@@ -1296,7 +1296,7 @@ if __name__ == '__main__':
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
                         resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
     else:
-        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=99, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_joyo")
+        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=99, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="tree_slide")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
