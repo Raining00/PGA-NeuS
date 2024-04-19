@@ -17,6 +17,7 @@
     "with_pre_trained_RT": false,
     "pre_trained_RT": "./debug/yoyo_refine_rt_sequence/out.json",
     "image_type": "png",
+    "split_range": 10,
     "R0": [0.2254, -0.0434,  0.1564, -0.9657],
     "T0": [-0.089,  0.0444,  0.055],
     "with_fixed_camera": true,

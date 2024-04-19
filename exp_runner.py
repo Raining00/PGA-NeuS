@@ -489,19 +489,19 @@ class Runner:
             # t = [0.13278135983999997 , -0.12696580667999996 , 0.3725301366] # eqv rt for soap1 pose   
             # q = [ 0.6053165197372437, 0.2681955397129059, -0.37045902013778687, 0.6537007689476013]
             # t = [ 0.24793949723243713, 0.6238101124763489, 0.677591860294342] # 20th frame qt for pose2
-            # q, t = [0.9535, 0.0949, 0.0505, 0.3365], [-0.2356, 0.162, 0.0834]
+            q, t = [0.907482645743031 , 0.25718520591388155 , 0.09056920800225723 , 0.31957508678885904], [-0.2332,  0.1606,  0.0766]
         w, x, y, z = q
         if original_mat is None:
             original_mat = np.array(
-[[0.9478352,  -0.176360,   0.2655286,  -0.10285065],
-        [-0.31557244, -0.6366862,   0.70359415, -0.7547572],
-        [0.04497216, -0.7506848,  -0.65912807,  0.6240542],
-        [0.0,          0.0,          0.0,          1.0]]
+        [[ 0.57669246, -0.58014095,  0.5752063,  -0.43958175],
+        [-0.8148342,  -0.45922986,  0.35376993, -0.36971632],
+        [ 0.05891547, -0.67271423, -0.73755306,  0.6459542 ],
+        [ 0.0,        0.0 ,         0.0   ,      1.0       ]]
         )
         if intrinsic_mat is None:
             intrinsic_mat = np.array(
-        [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
-        [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
+        [[1.78206689e+03, 6.81166830e-06, 9.47171570e+02],
+        [0.00000000e+00, 1.75425305e+03, 4.59540192e+02],
         [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
             )       
         rotate_mat = np.array([
@@ -589,7 +589,7 @@ if __name__ == '__main__':
 conda activate neus
 cd D:/gitwork/NeuS
 python exp_runner.py --mode train_dynamic --conf ./confs/wmask.conf --case bird --is_continue --render_at_pose_path D:/gitwork/genshinnerf/dynamic_test/train_dynamic_setting.json
-python exp_runner.py --mode validate_mesh --conf ./confs/wmask_blender_bunny.conf --case bunny2 --is_continue
+python exp_runner.py --mode validate_mesh --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4
 python exp_runner.py --mode render_rtkm --conf ./confs/wmask_blender_bunny.conf --case bunny_original --is_continue
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 5
 python exp_runner.py --mode validate_image --conf ./confs/thin_structure.conf --case scene1 --is_continue --gpu 4

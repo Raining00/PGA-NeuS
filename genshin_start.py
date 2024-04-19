@@ -109,11 +109,10 @@ class GenshinStart(torch.nn.Module):
         option = {'mesh':motion_data["static_mesh_path"],
                   'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"],
-                  'delta_frame': motion_data['delta_frame'],
                   'substep':motion_data["substep"],
-                  'kn': 0.8,
-                  'mu': 0.3,
-                  'split_range': motion_data['split_range'],
+                  'split_range': motion_data["split_range"],
+                  'kn': 0.4,
+                  'mu': 0.1,
                   'translation': motion_data['T0'],
                   'quaterion': motion_data['R0'],
                   'linear_damping': 0.999,
@@ -224,10 +223,10 @@ class GenshinStart(torch.nn.Module):
         self.set_init_quaternion(options['quaterion'])
     
     def physical_re_init(self):
-        last_translation = self.translation[-1].detach().clone().cpu().numpy()
-        last_quaternion = self.quaternion[-1].detach().clone().cpu().numpy()
-        last_v = self.v[-1].detach().clone().cpu().numpy()
-        last_omega = self.omega[-1].detach().clone().cpu().numpy()
+        self.last_translation = self.translation[-1].detach().clone().cpu().numpy()
+        self.last_quaternion = self.quaternion[-1].detach().clone().cpu().numpy()
+        self.last_v = self.v[-1].detach().clone().cpu().numpy()
+        self.last_omega = self.omega[-1].detach().clone().cpu().numpy()
 
         self.translation = []
         self.quaternion = []
@@ -238,10 +237,10 @@ class GenshinStart(torch.nn.Module):
             self.quaternion.append(torch.zeros(4, dtype=torch.float32, requires_grad=True))
             self.v.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
             self.omega.append(torch.zeros(3, dtype=torch.float32, requires_grad=True))
-        self.translation[0] = torch.tensor(last_translation, dtype=torch.float32, requires_grad=True)
-        self.quaternion[0] = torch.tensor(last_quaternion, dtype=torch.float32, requires_grad=True)
-        self.v[0] = torch.tensor(last_v, dtype=torch.float32, requires_grad=True)
-        self.omega[0] = torch.tensor(last_omega, dtype=torch.float32, requires_grad=True)
+        self.translation[0] = torch.tensor(self.last_translation, dtype=torch.float32, requires_grad=True)
+        self.quaternion[0] = torch.tensor(self.last_quaternion, dtype=torch.float32, requires_grad=True)
+        self.v[0] = torch.tensor(self.last_v, dtype=torch.float32, requires_grad=True)
+        self.omega[0] = torch.tensor(self.last_omega, dtype=torch.float32, requires_grad=True)
 
     def add_planar_contact(self, slope_degree, init_height):
         self.c = np.cos(np.deg2rad(slope_degree))
@@ -264,20 +263,27 @@ class GenshinStart(torch.nn.Module):
         with torch.no_grad():
             self.v[0] = self.init_v
             self.omega[0] = self.init_omega
+    
+    def set_init_state(self):
+        with torch.no_grad():
+            self.v[0] = torch.tensor(self.last_v, dtype=torch.float32, requires_grad=True)
+            self.omega[0] = torch.tensor(self.last_omega, dtype=torch.float32, requires_grad=True)
+            self.translation[0] = torch.tensor(self.last_translation, dtype=torch.float32, requires_grad=True)
+            self.quaternion[0] = torch.tensor(self.last_quaternion, dtype=torch.float32, requires_grad=True)
 
     def write_out_params(self, file_path):
         out_dict = {}
         out_kn = self.kn.detach().clone().cpu().numpy().tolist()
         out_mu = self.mu.detach().clone().cpu().numpy().tolist()
         out_r, out_t = {}, {}
-        for i in range(self.frames * self.substep):
+        for i in range(self.split_range * self.substep):
             if i % self.substep == 0:
                 out_dict[str(i // self.substep) + "_T"] = (self.translation[i].detach().clone().cpu().numpy().tolist())
                 out_dict[str(i // self.substep) + "_R"] = (self.quaternion[i].detach().clone().cpu().numpy().tolist())
         out_dict['out_kn'] = out_kn
         out_dict['out_mu'] = out_mu
-        out_dict['out_v'] = self.v[self.frames * self.substep - 1].detach().clone().cpu().numpy().tolist()
-        out_dict['out_omega'] = self.omega[self.frames * self.substep - 1].detach().clone().cpu().numpy().tolist()
+        out_dict['out_v'] = self.v[self.split_range * self.substep - 1].detach().clone().cpu().numpy().tolist()
+        out_dict['out_omega'] = self.omega[self.split_range * self.substep - 1].detach().clone().cpu().numpy().tolist()
         out_dict['init_v'] = self.init_v.detach().clone().cpu().numpy().tolist()
         out_dict['init_omega'] = self.init_omega.detach().clone().cpu().numpy().tolist()
         # out_dict['out_r'] = out_r
@@ -472,7 +478,7 @@ class GenshinStart(torch.nn.Module):
 
     def physical_forward(self, f:torch.int32):
         # advect
-        v_out = (self.v[f] + torch.tensor([0.0, 0.0, -9.8]) * self.dt) * self.linear_damping
+        v_out = (self.v[f] + torch.tensor([0.0, 0.0, -9.81914]) * self.dt) * self.linear_damping
         omega_out = self.omega[f] * self.angular_damping
         v_out_, omega_out_ = self.sdf_collision(f=f)
         # v_out_, omega_out_ = self.slope_collision(f=f)
@@ -524,8 +530,8 @@ class GenshinStart(torch.nn.Module):
         # import pdb; pdb.set_trace();
         return new_R, new_T 
 
-    def forward(self, max_f, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
-        pbar = trange(max_f)
+    def forward(self, max_f, frame_start=1, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
+        pbar = trange(1, max_f+1)
         pbar.set_description('\033[5;41mForward\033[0m')
         global_loss = 0
         print('optimizer init v = ', self.init_v)
@@ -536,8 +542,8 @@ class GenshinStart(torch.nn.Module):
             for f in range(self.substep * (i - 1), self.substep * i):
                 self.physical_forward(f)
             if train_mode != "rt_mode":
-                rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[i], self.rays_mask_all[i], self.rays_o_all[i], \
-                self.rays_v_all[i]
+                rays_gt, rays_mask, rays_o, rays_d = self.rays_gt_all[frame_start + i], self.rays_mask_all[frame_start + i], self.rays_o_all[frame_start + i], \
+                self.rays_v_all[frame_start + i]
 
                 rays_o, rays_d, rays_gt = rays_o[rays_mask].reshape(-1, 3), rays_d[rays_mask].reshape(-1, 3), rays_gt[
                     rays_mask].reshape(-1, 3)  # reshape is used for after mask, it become [len*3]
@@ -1022,18 +1028,21 @@ def get_optimizer(mode, genshinStart):
 
 
 def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=False, train_mode="pic_mode", post_fix=""):
-    def train_forward(optimizer, vis_folder=None, split_range=5, train_mode="pic_mode"):
+    def train_forward(optimizer, vis_folder=None, frame_start = 1, split_range=5, train_mode="pic_mode"):
         optimizer.zero_grad()
         if vis_folder is not None and write_out_flag:
             if not os.path.exists(vis_folder):
                 os.makedirs(vis_folder)
         loss = torch.tensor(np.nan)
         while loss.isnan():
-            loss = genshinStart.forward(max_f = split_range,vis_folder=vis_folder, train_mode=train_mode, write_out_flag=write_out_flag)
+            loss = genshinStart.forward(max_f = split_range, frame_start = frame_start, vis_folder=vis_folder, train_mode=train_mode, write_out_flag=write_out_flag)
         return loss
     frame_start = 1
     while frame_start < max_f:
         frame_end = min(frame_start + splite_range - 1, max_f)
+        # print("test ", frame_start, " " , frame_end)
+        splite_range = frame_end - frame_start + 1 # reset the splite_range for the last batch
+        
         if frame_start == 1:
             optimizer = get_optimizer('train_dynamic_init', genshinStart)
         else:
@@ -1041,16 +1050,18 @@ def train_dynamic(max_f, iters, genshinStart, splite_range=5, write_out_flag=Fal
         for i in range(iters):
             if frame_start == 1:
                 genshinStart.set_init_v()
+            else:
+                genshinStart.set_init_state()
             if write_out_flag:
                 vis_folder =Path('train_dynamic' + post_fix) / ('iter_' + str(i))
             else:
                 vis_folder = None
-            loss = train_forward(optimizer=optimizer, vis_folder=vis_folder,
+            loss = train_forward(optimizer=optimizer, vis_folder=vis_folder,frame_start=frame_start - 1,
                                 split_range=splite_range, train_mode=train_mode)
             if loss.norm() < 1e-3:
                 break
             optimizer.step()
-            out_json_path = "./train_dynamic" + post_fix + "/out_jsons/" + str(i) + ".json"
+            out_json_path = "./train_dynamic" + post_fix + "/out_jsons/" + str(i) + "_" + str(frame_start) + ".json"
             genshinStart.write_out_params(out_json_path)
             print("Epoh ", str(i))
             print_blink('mu: {}, kn: {}, init_v: {}, init_omg: {}'.format(genshinStart.mu, genshinStart.kn, genshinStart.init_v, genshinStart.init_omega))
@@ -1247,8 +1258,8 @@ if __name__ == '__main__':
         train_dynamic()
     elif args.mode == "refine_rt":
         init_R, init_T = \
-        torch.tensor([0.9535, 0.0949, 0.0505, 0.3365], dtype=torch.float32, requires_grad=True),\
-        torch.tensor([-0.2356, 0.162, 0.0834], dtype=torch.float32, requires_grad=True) # use 0 as default
+        torch.tensor([0.907482645743031 , 0.25718520591388155 , 0.09056920800225723 , 0.31957508678885904], dtype=torch.float32, requires_grad=True),\
+        torch.tensor([-0.2332,  0.1606,  0.0766], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=200)
     elif args.mode == "refine_rt_sequence":
         init_R, init_T = torch.tensor([0.2254, -0.0434,  0.1564, -0.9657], dtype=torch.float32, requires_grad=True), torch.tensor([-0.089,  0.0444,  0.055], dtype=torch.float32, requires_grad=True)
@@ -1285,7 +1296,7 @@ if __name__ == '__main__':
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
                         resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
     else:
-        train_dynamic(genshinStart.frame_counts, splite_range=16, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_10")
+        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=99, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_joyo")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
@@ -1301,5 +1312,5 @@ python genshin_start.py --mode render_result_novel_view_full --conf ./confs/json
 python genshin_start.py --mode refine_rt --conf ./confs/json/furina.json --gpu 3 --image_id 8 
 python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/furina.json 
 python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/nahida.json --gpu 2
-python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/yoyo_slide2_original_man.json --gpu 1
+python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/yoyo_book_long_original.json --gpu 1
 """

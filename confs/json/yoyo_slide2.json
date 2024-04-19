@@ -12,6 +12,7 @@
     "substep": 10, 
     "frame_dt": 0.016666667,
     "delta_frame": 3, 
+    "split_range": 10,
     "images_path": "./public_data/yoyo_slide/image",
     "masks_path": "./public_data/yoyo_slide/mask",
     "with_pre_trained_RT": false,

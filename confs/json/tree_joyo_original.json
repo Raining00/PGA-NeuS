@@ -11,14 +11,14 @@
     "frame_counts": 15,
     "substep": 10, 
     "frame_dt": 0.0166667,
-    "delta_frame": 3, 
+    "split_range": 15,
     "images_path": "./public_data/tree_joyo/image",
     "masks_path": "./public_data/tree_joyo/mask",
     "with_pre_trained_RT": false,
     "pre_trained_RT": "./debug/refine_rt_sequence/out.json",
     "image_type": "png",
-    "R0": [0.7329, 0.6052, 0.2962, 0.0937],
-    "T0": [-0.0717, -0.1975,  0.3492],
+    "R0": [0.7016, 0.6312, 0.2933, 0.1528],
+    "T0": [-0.0520,  -0.1494,  0.3014],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
         "M":   [

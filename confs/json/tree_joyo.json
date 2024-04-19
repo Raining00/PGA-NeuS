@@ -11,6 +11,7 @@
     "frame_counts": 15,
     "substep": 10, 
     "frame_dt": 0.0166667,
+    "split_range": 10,
     "delta_frame": 3, 
     "images_path": "./public_data/tree_joyo/image",
     "masks_path": "./public_data/tree_joyo/mask",

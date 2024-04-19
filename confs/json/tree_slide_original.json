@@ -5,21 +5,21 @@
     "neus_static_object_name": "tree_original",
     "neus_static_object_continue": true,
     "neus_background_conf_path": "./confs/thin_structure.conf",
-    "neus_static_background_name": "slide",
+    "neus_static_background_name": "slide1",
     "neus_static_background_continue": true,
     "batch_size": 512,
     "frame_counts": 24,
     "substep": 10, 
     "frame_dt": 0.0333333333333333,
     "collision_threshold": 1e-6,
-    "delta_frame": 3, 
+    "split_range": 10, 
     "images_path": "./public_data/tree_slide/image",
     "masks_path": "./public_data/tree_slide/mask",
     "with_pre_trained_RT": false,
     "pre_trained_RT": "./debug/refine_rt_sequence/out.json",
     "image_type": "png",
-    "R0": [0.8486, 0.0892, 0.0640, 0.5176],
-    "T0": [-0.0539, -0.0075,  0.104],
+    "R0": [0.8820198367732608 , 0.06167683525648956 , 0.03258732302535281 , 0.46602043078523453],
+    "T0": [-0.052, 0.01,  0.0768],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
         "M": 
@@ -31,5 +31,6 @@
         [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
         [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
         [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+       
     }
 }

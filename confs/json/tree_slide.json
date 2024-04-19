@@ -10,6 +10,7 @@
     "batch_size": 512,
     "frame_counts": 24,
     "substep": 10, 
+    "split_range": 10,
     "frame_dt": 0.0333333333333333,
     "delta_frame": 3, 
     "images_path": "./public_data/tree_slide/image",
