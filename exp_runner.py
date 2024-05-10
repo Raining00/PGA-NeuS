@@ -489,20 +489,20 @@ class Runner:
             # t = [0.13278135983999997 , -0.12696580667999996 , 0.3725301366] # eqv rt for soap1 pose   
             # q = [ 0.6053165197372437, 0.2681955397129059, -0.37045902013778687, 0.6537007689476013]
             # t = [ 0.24793949723243713, 0.6238101124763489, 0.677591860294342] # 20th frame qt for pose2
-            q, t = [0.907482645743031 , 0.25718520591388155 , 0.09056920800225723 , 0.31957508678885904], [-0.2332,  0.1606,  0.0766]
+            q, t = [0.6365, 0.1523, 0.0155, 0.7559], [-0.1192,  0.1971,  0.1518]
         w, x, y, z = q
         if original_mat is None:
             original_mat = np.array(
-        [[ 0.57669246, -0.58014095,  0.5752063,  -0.43958175],
-        [-0.8148342,  -0.45922986,  0.35376993, -0.36971632],
-        [ 0.05891547, -0.67271423, -0.73755306,  0.6459542 ],
-        [ 0.0,        0.0 ,         0.0   ,      1.0       ]]
+        [[-0.94923383, 0.21176887, -0.23261367,  0.25262254],
+        [ 0.31366813,  0.6931852,  -0.6489273,   0.5274293 ],
+        [ 0.02382176, -0.6889472,  -0.72441995,  0.50595254],
+        [ 0.0,          0.0,          0.0,          1.0     ]]
         )
         if intrinsic_mat is None:
             intrinsic_mat = np.array(
-        [[1.78206689e+03, 6.81166830e-06, 9.47171570e+02],
-        [0.00000000e+00, 1.75425305e+03, 4.59540192e+02],
-        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+        [[1.63532520e+03, 2.79791834e-07, 9.64251587e+02],
+        [0.00000000e+00, 1.73616626e+03, 7.45466309e+02],
+        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00 ]]
             )       
         rotate_mat = np.array([
             [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -602,5 +602,5 @@ python exp_runner.py --mode render_rtkm --conf ./confs/tree_structure_white_bkgd
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap1_merge --is_continue --gpu 3 --post_fix _ --resolution_level 6
 python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case soap2_merge --is_continue --gpu 2 --post_fix 0 --resolution_level 6
 python exp_runner.py --mode render_rtkm --conf ./confs/small_structure_white_bkgd.conf --case yoyo_original_man_min --is_continue --post_fix 0 --resolution_level 6
-
+python exp_runner.py --mode render_rtkm --conf ./confs/thin_structure_white_bkgd.conf --case dragon_pos2_delta --is_continue --post_fix 0 --resolution_level 6
 """

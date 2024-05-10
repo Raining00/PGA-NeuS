@@ -1,6 +1,6 @@
 {
     "device": "cuda",
-    "static_mesh_path": "./exp/tree_original/womask_white/meshes/tree10k.obj",
+    "static_mesh_path": "./exp/tree_original/womask_white/meshes/tree3k.obj",
     "neus_object_conf_path": "./confs/tree_structure_white_bkgd.conf",
     "neus_static_object_name": "tree_original",
     "neus_static_object_continue": true,
