@@ -111,7 +111,7 @@ class GenshinStart(torch.nn.Module):
                   'frame_dt': motion_data["frame_dt"],
                   'substep':motion_data["substep"],
                   'split_range': motion_data["split_range"],
-                  'kn': 0.6,
+                  'kn': 0.95,
                   'mu': 0.2,
                   'init_v': motion_data["init_v"],
                   'init_omega': motion_data["init_omega"],                                       
@@ -480,7 +480,7 @@ class GenshinStart(torch.nn.Module):
 
     def physical_forward(self, f:torch.int32):
         # advect
-        v_out = (self.v[f] + torch.tensor([0.0, 0.0, -9.81914]) * self.dt) * self.linear_damping
+        v_out = (self.v[f] + torch.tensor([0.0, -10.0, 0.0]) * self.dt) * self.linear_damping
         omega_out = self.omega[f] * self.angular_damping
         v_out_, omega_out_ = self.sdf_collision(f=f)
         # v_out_, omega_out_ = self.slope_collision(f=f)
@@ -584,6 +584,7 @@ class GenshinStart(torch.nn.Module):
                                                                             background_rgb=background_rgb)
                     else : # use the additional pose
                         # calc equivalent RT for this additional pose
+                        print_blink("using additional pose to render for equv calc camera-z < 0")
                         new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
                         render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                             near=near, far=far,
@@ -609,17 +610,22 @@ class GenshinStart(torch.nn.Module):
                 # print_info("repeated times ： ", count)
                 # img_debug should has same shape as rays_gt
                 debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
-                W, H, cnt = self.W, self.H, 0
+                W, H, cnt, black_there_hold = self.W, self.H, 0, 5
                 rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
                 debug_img = np.zeros_like(rays_mask).astype(np.float32)
                 if write_out_flag:
                     for index in range(0, H):
                         for j in range(0, W):
                             if rays_mask[index][j][0]:
-                                debug_img[index][j][0] = debug_rgb[cnt][0]
-                                debug_img[index][j][1] = debug_rgb[cnt][1]
-                                debug_img[index][j][2] = debug_rgb[cnt][2]
-                                cnt = cnt + 1
+                                if debug_rgb[cnt][0] > black_there_hold:
+                                    debug_img[index][j][0] = debug_rgb[cnt][0]
+                                    debug_img[index][j][1] = debug_rgb[cnt][1]
+                                    debug_img[index][j][2] = debug_rgb[cnt][2]
+                                else:
+                                    debug_img[index][j][0] = 255
+                                    debug_img[index][j][1] = 255
+                                    debug_img[index][j][2] = 255                       
+                                cnt = cnt + 1                            
                 print_blink("saving debug image at " + str(i) + " index")
                 if vis_folder !=None and write_out_flag:
                     cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
@@ -666,6 +672,8 @@ class GenshinStart(torch.nn.Module):
                                                                                 background_rgb=background_rgb)
                         else : # use the additional pose
                             # calc equivalent RT for this additional pose
+                            print_blink("using additional pose case the eqv camera-z < 0")
+                            print(str(pre_calc_c2w))
                             new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
                             render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                                 near=near, far=far,
@@ -678,16 +686,22 @@ class GenshinStart(torch.nn.Module):
                         torch.cuda.synchronize()
                         del render_out
                     debug_rgb = (np.concatenate(debug_rgb, axis=0).reshape(-1, 3) * 256).clip(0, 255).astype(np.uint8)
-                    W, H, cnt = self.W, self.H, 0
+                    W, H, cnt, black_there_hold = self.W, self.H, 0, 5
                     rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
                     debug_img = np.zeros_like(rays_mask).astype(np.float32)
-                    for index in range(0, H):
-                        for j in range(0, W):
-                            if rays_mask[index][j][0]:
-                                debug_img[index][j][0] = debug_rgb[cnt][0]
-                                debug_img[index][j][1] = debug_rgb[cnt][1]
-                                debug_img[index][j][2] = debug_rgb[cnt][2]
-                                cnt = cnt + 1
+                    if write_out_flag: # hold the mask be white if 
+                        for index in range(0, H):
+                            for j in range(0, W):
+                                if rays_mask[index][j][0]:
+                                    if debug_rgb[cnt][0] > black_there_hold:
+                                        debug_img[index][j][0] = debug_rgb[cnt][0]
+                                        debug_img[index][j][1] = debug_rgb[cnt][1]
+                                        debug_img[index][j][2] = debug_rgb[cnt][2]
+                                    else:
+                                        debug_img[index][j][0] = 255
+                                        debug_img[index][j][1] = 255
+                                        debug_img[index][j][2] = 255                       
+                                    cnt = cnt + 1
                     print_blink("saving debug image at " + str(i) + " index")
                     if vis_folder !=None and write_out_flag:
                         cv.imwrite((vis_folder / (str(i) + ".png")).as_posix(), debug_img)
@@ -777,7 +791,7 @@ class GenshinStart(torch.nn.Module):
                 new_R, new_T = self.calc_RT_in_additional_pose(T=self.raw_translation, R=self.raw_quaternion)
                 render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
-                                                                    T=self.raw_translation, R=self.raw_quaternion,
+                                                                    T=new_T, R=new_R,
                                                                     camera_c2w=orgin_mat_c2w,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
@@ -1311,7 +1325,7 @@ if __name__ == '__main__':
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
                         resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
     else:
-        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="yoyo_book_short")
+        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_furina_test")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1

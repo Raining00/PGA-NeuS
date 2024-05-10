@@ -111,8 +111,8 @@ class GenshinStart(torch.nn.Module):
                   'frames': motion_data["frame_counts"],
                   'frame_dt': motion_data["frame_dt"],
                   'substep':motion_data["substep"],
-                  'kn': 0.95,
-                  'mu': 0.1,
+                  'kn':  0.948689341545105,
+                  'mu': 0.05732974782586098,
                   'floor_kn': 0.05,
                   'floor_mu': 0.3,
                   'init_v': motion_data["init_v"],
@@ -464,7 +464,6 @@ class GenshinStart(torch.nn.Module):
             v_out = v_out + J * self.inv_mass
             omega_out = omega_out + inertial_inv @ collision_Rri_mat @ J
         return v_out, omega_out
-       
     
     def physical_forward(self, f:torch.int32):
         # advect
@@ -568,7 +567,7 @@ class GenshinStart(torch.nn.Module):
                 rays_mask = (rays_mask.detach().cpu().numpy()).reshape(H, W, 3)
                 debug_img = np.zeros_like(rays_mask).astype(np.float32)
                 black_there_hold=5
-                if write_out_flag:
+                if write_out_flag: # hold the mask be white if 
                     for index in range(0, H):
                         for j in range(0, W):
                             if rays_mask[index][j][0]:
@@ -1136,8 +1135,8 @@ if __name__ == '__main__':
         refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=Path("debug", "refine_rt_sequence"), iters=50)
         # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=None, iters=50)
     elif args.mode == "refine_rt_sequence_with_init_json":
-        init_json_path = "./debug/PA_yoyo_book_short.json" # need to be specific in bash in the future
-        refine_rt_sequence_with_init_json(genshinStart=genshinStart, write_out_folder=Path("debug", "refine_rt_sequence_100_PA_yoyo_book_short"), sequence_length = 24, iters=250, init_json_path=init_json_path, start_idx=0)
+        init_json_path = "./debug/PA_NeuS_dragon_palette.json" # need to be specific in bash in the future
+        refine_rt_sequence_with_init_json(genshinStart=genshinStart, write_out_folder=Path("debug", "refine_rt_sequence_250_PA_NeuS_dragon_palette"), sequence_length = 20, iters=250, init_json_path=init_json_path, start_idx=0)
     elif args.mode == 'render_with_depth':
         init_R, init_T = torch.tensor([0.4632, -0.0444,  0.0322, -0.8849], dtype=torch.float32, requires_grad=True), torch.tensor([-0.0943, -0.0227,  0.1591], dtype=torch.float32, requires_grad=True)
         write_out_path = Path("debug", "render_with_depth")
@@ -1150,7 +1149,7 @@ if __name__ == '__main__':
         write_out_dir = Path("debug", "render_result_full_sequence_for_train_dynamic")
         render_full_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=21)
     else:
-        train_dynamic(genshinStart.frame_counts, iters=99, genshinStart=genshinStart, write_out_flag=True, train_mode="_dragon_slip")
+        train_dynamic(genshinStart.frame_counts, iters=20, genshinStart=genshinStart, write_out_flag=True, train_mode="_dragon_slip_continue")
 """ 
 python gen_tmp.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python gen_tmp.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1
