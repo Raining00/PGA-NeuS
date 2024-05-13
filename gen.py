@@ -30,7 +30,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     torch.cuda.set_device(args.gpu) 
-    run_on_gpu(memory_size_gb=10, run_time_seconds=6000)
+    run_on_gpu(memory_size_gb=9 , run_time_seconds=60000)
 
 """
 python gen.py 

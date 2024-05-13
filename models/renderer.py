@@ -394,7 +394,7 @@ class NeuSRenderer:
     # better to use R-T transform when rendering a single ray, make easier to adapt in the future
     # rays_gt = rays ground truth [batch_size, 3], infering the ground truth RGB.
     def render_dynamic(self, rays_o, rays_d, near, far, R, T, camera_c2w, perturb_overwrite=-1, background_rgb=None,
-                       cos_anneal_ratio=0.0):
+                       additional_transform = None, cos_anneal_ratio=0.0):
         # apply R to rays_d and T to rays_o, requires grad here
 
         batch_size = len(rays_o)
@@ -413,6 +413,8 @@ class NeuSRenderer:
         transform_matrix[0:3, 0:3] = rotate_mat
         transform_matrix[0:3, 3] = T
         transform_matrix[3, 3] = 1.0
+        if additional_transform is not None: # now rendering with addtional pose
+            transform_matrix = torch.matmul(transform_matrix, additional_transform)
         transform_matrix_inv = torch.inverse(transform_matrix)  # make an inverse
         # rotate_mat = transform_matrix_inv[:3, :3]
         # rotate_mat = torch.inverse(rotate_mat)

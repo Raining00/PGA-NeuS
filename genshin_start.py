@@ -118,22 +118,24 @@ class GenshinStart(torch.nn.Module):
                   'translation': motion_data['T0'],
                   'quaterion': motion_data['R0'],
                   'linear_damping': 0.999,
-                  'angular_damping': 0.998}
-
+                  'angular_damping': 0.998
+                  }
         self.physical_init(options=option)
         if 'planar_contact' in motion_data:
             self.add_planar_contact(slope_degree=motion_data['planar_contact'][0], init_height=motion_data['planar_contact'][1])
         self.static_object_conf_path = motion_data["neus_object_conf_path"]
         self.static_object_name = motion_data['neus_static_object_name']
         self.static_object_continue = motion_data['neus_static_object_continue']
-        try: # runner_object_additional_pose SHOULD BE A torch tensor
+        try: # runner_object_additional_transform SHOULD BE A torch tensor
             self.static_object_name_additional = motion_data['neus_static_object_name_additional']
-            self.runner_object_additional_pose = \
+            self.runner_object_additional_transform = \
                 torch.from_numpy(np.array(motion_data['neus_static_object_name_additional_pose']).astype(np.float32)).to(self.device)
         except:
             print_blink("NO additional pose for render, use the same one")
             self.static_object_name_additional = motion_data['neus_static_object_name']
-            self.runner_object_additional_pose = torch.from_numpy(np.eye(4).astype(np.float32)).to(self.device) # use an 4x4 I as no RT 
+            self.runner_object_additional_transform = torch.from_numpy(np.eye(4).astype(np.float32)).to(self.device) # use an 4x4 I as no RT 
+            self.runner_object_additional_translation = torch.tensor([0, 0, 0], dtype=torch.float32).to(self.device) # this para is raw as it is just detected by a qr code, not precise
+            self.runner_object_additional_quaternion = torch.tensor([1, 0, 0, 0], dtype=torch.float32).to(self.device) # 
         self.static_background_conf_path = motion_data["neus_background_conf_path"]
         self.static_background_name = motion_data['neus_static_background_name']
         self.static_background_continue = motion_data['neus_static_background_continue']
@@ -184,6 +186,8 @@ class GenshinStart(torch.nn.Module):
         vertices = np.array(self.mesh.vertices) - self.mesh.center_mass
         self.raw_translation = torch.tensor([0, 0, 0], dtype=torch.float32, requires_grad=True) # this para is raw as it is just detected by a qr code, not precise
         self.raw_quaternion = torch.tensor([1, 0, 0, 0], dtype=torch.float32, requires_grad=True) # 
+        self.raw_additional_translation = torch.tensor([0, 0, 0], dtype=torch.float32, requires_grad=True) # this para is raw as it is just detected by a qr code, not precise
+        self.raw_additional_quaternion = torch.tensor([1, 0, 0, 0], dtype=torch.float32, requires_grad=True) # 
         self.translation = []
         self.quaternion = []
         self.v = []
@@ -521,30 +525,6 @@ class GenshinStart(torch.nn.Module):
         calc_equ_c2w = torch.matmul(transform_matrix_inv, camera_c2w)
         return calc_equ_c2w
     
-    def calc_RT_in_additional_pose(self, R, T): # calc the specific Rt for additional pose NeuS with 
-        # assume addtional transform mat is known(the transform from additional pose to original pose)
-        w, x, y, z = R
-        rotate_mat = torch.zeros((3, 3), device=self.device)
-        rotate_mat[0, 0] = 1 - 2 * (y ** 2 + z ** 2)
-        rotate_mat[0, 1] = 2 * (x * y - z * w)
-        rotate_mat[0, 2] = 2 * (x * z + y * w)
-        rotate_mat[1, 0] = 2 * (x * y + z * w)
-        rotate_mat[1, 1] = 1 - 2 * (x ** 2 + z ** 2)
-        rotate_mat[1, 2] = 2 * (y * z - x * w)
-        rotate_mat[2, 0] = 2 * (x * z - y * w)
-        rotate_mat[2, 1] = 2 * (y * z + x * w)
-        rotate_mat[2, 2] = 1 - 2 * (x ** 2 + y ** 2)
-        transform_matrix = torch.zeros((4, 4), device=self.device)
-        transform_matrix[0:3, 0:3] = rotate_mat
-        transform_matrix[0:3, 3] = T
-        transform_matrix[3, 3] = 1.0
-        # trans_mat = torch.matmul(trans_mat, self.runner_object_additional_pose) #left mul
-        trans_mat__ = torch.matmul(transform_matrix, self.runner_object_additional_pose) #right mul
-        new_R, new_T = self.matrix_to_quad(trans_mat__[:3, :3]), \
-            torch.tensor(trans_mat__[:3, 3], dtype=torch.float32, requires_grad=True) # this return require grad true
-        # import pdb; pdb.set_trace();
-        return new_R, new_T 
-
     def forward(self, max_f, frame_start=1, vis_folder=None, train_mode="rt_mode", write_out_flag=False):
         pbar = trange(1, max_f+1)
         pbar.set_description('\033[5;41mForward\033[0m')
@@ -585,11 +565,10 @@ class GenshinStart(torch.nn.Module):
                     else : # use the additional pose
                         # calc equivalent RT for this additional pose
                         print_blink("using additional pose to render for equv calc camera-z < 0")
-                        new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
                         render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                             near=near, far=far,
-                                                                            T=new_T, R=new_R,
-                                                                            camera_c2w=orgin_mat_c2w,
+                                                                            T=self.translation[f + 1], R=self.quaternion[f + 1],
+                                                                            camera_c2w=orgin_mat_c2w, additional_transform=self.runner_object_additional_transform,
                                                                             cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                             background_rgb=background_rgb)       
                     # end_time = time.time()   
@@ -674,11 +653,10 @@ class GenshinStart(torch.nn.Module):
                             # calc equivalent RT for this additional pose
                             print_blink("using additional pose case the eqv camera-z < 0")
                             print(str(pre_calc_c2w))
-                            new_R, new_T = self.calc_RT_in_additional_pose(R=self.quaternion[f + 1], T=self.translation[f + 1])
                             render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                                 near=near, far=far,
-                                                                                T=new_T, R=new_R,
-                                                                                camera_c2w=orgin_mat_c2w,
+                                                                                T=self.translation[f + 1], R=self.quaternion[f + 1],
+                                                                                camera_c2w=orgin_mat_c2w, additional_transform=self.runner_object_additional_transform,
                                                                                 cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                                 background_rgb=background_rgb)      
                         color_fine = render_out["color_fine"]
@@ -786,13 +764,12 @@ class GenshinStart(torch.nn.Module):
                                                                     background_rgb=background_rgb)
             else : # use the additional pose
                 # calc equivalent RT for this additional pose
-                # print("run with additional pose rendering")
+                print("run with additional pose rendering")
                 #TODO: fix the bug that makes raw_quaternion has no grad
-                new_R, new_T = self.calc_RT_in_additional_pose(T=self.raw_translation, R=self.raw_quaternion)
                 render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
-                                                                    T=new_T, R=new_R,
-                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    T=self.raw_additional_translation, R=self.raw_additional_quaternion,
+                                                                    camera_c2w=orgin_mat_c2w, additional_transform=self.runner_object_additional_transform,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
             color_fine = render_out["color_fine"]
@@ -801,6 +778,7 @@ class GenshinStart(torch.nn.Module):
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error),reduction='sum') / rays_sum  # normalize
             global_loss = global_loss + color_fine_loss.clone().detach()
             color_fine_loss.backward(retain_graph=True)  # img_loss for refine R & T
+            # import pdb; pdb.set_trace();
             torch.cuda.synchronize()
             del render_out
         ### img_debug should has same shape as rays_gt
@@ -915,11 +893,10 @@ class GenshinStart(torch.nn.Module):
                                                                     background_rgb=background_rgb)
             else : # use the additional pose
                 # calc equivalent RT for this additional pose
-                new_R, new_T = self.calc_RT_in_additional_pose(T=translation, R=quaternion)
                 render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
-                                                                    T=new_T, R=new_R,
-                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    T=translation, R=quaternion,
+                                                                    camera_c2w=orgin_mat_c2w, additional_transform=self.runner_object_additional_transform,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
             if feasible('color_fine'):
@@ -980,11 +957,10 @@ class GenshinStart(torch.nn.Module):
                                                                     background_rgb=background_rgb)
             else : # use the additional pose
                 # calc equivalent RT for this additional pose
-                new_R, new_T = self.calc_RT_in_additional_pose(T=translation, R=quaternion)
                 render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                     near=near, far=far,
-                                                                    T=new_T, R=new_R,
-                                                                    camera_c2w=orgin_mat_c2w,
+                                                                    T=translation, R=quaternion,
+                                                                    camera_c2w=orgin_mat_c2w, additional_transform=self.runner_object_additional_transform,
                                                                     cos_anneal_ratio=self.runner_object.get_cos_anneal_ratio(),
                                                                     background_rgb=background_rgb)
             if feasible('color_fine'):
@@ -1287,8 +1263,17 @@ if __name__ == '__main__':
         train_dynamic()
     elif args.mode == "refine_rt":
         init_R, init_T = \
-        torch.tensor([0.6365, 0.1523, 0.0155, 0.7559], dtype=torch.float32, requires_grad=True),\
-        torch.tensor([-0.1192,  0.1971,  0.1518], dtype=torch.float32, requires_grad=True) # use 0 as default
+        torch.tensor([
+        -0.14422591030597687,
+        -0.6897896528244019,
+        -0.008640069514513016,
+        -0.7094467282295227
+    ], dtype=torch.float32, requires_grad=True),\
+        torch.tensor([
+        0.02342228963971138,
+        0.29722514748573303,
+        0.20238471031188965
+    ], dtype=torch.float32, requires_grad=True) # use 0 as default
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=200)
     elif args.mode == "refine_rt_sequence":
         init_R, init_T = torch.tensor([0.2254, -0.0434,  0.1564, -0.9657], dtype=torch.float32, requires_grad=True), torch.tensor([-0.089,  0.0444,  0.055], dtype=torch.float32, requires_grad=True)
@@ -1312,16 +1297,21 @@ if __name__ == '__main__':
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="full", 
                         resolution_level = 2)
     elif args.mode == 'render_result_novel_view_full':
-        rt_json_path = Path("debug", "tree_slide_original.json")
-        write_out_dir = Path("debug", "render_result_sequence_for_refine_RT_tree_slide_novel")
-        camera_c2w = np.array( [[-0.9986295347545737, -0.03827609532605583, -0.035693036329990456, 0.1],
- [1.214306433183765e-16, 0.6819983600624984, -0.7313537016191706, 0.62],
- [0.05233595624294383, -0.7303514067889877, -0.681063705012595, 0.64],
- [0.0, 0.0, 0.0, 1.0]])
+        rt_json_path = Path("debug", "PGA_yoyo_book_short.json")
+        write_out_dir = Path("debug", "render_result_sequence_for_PGA_yoyo_book_short_novel")
+        camera_c2w = np.array( 
+[[-0.76185626,  0.26245168, -0.5921944,   0.41642544],
+ [ 0.6474314,   0.33703586, -0.68354917,  0.4555921 ],
+ [ 0.02019212, -0.9041714,  -0.4266923,   0.2712908 ],
+ [ 0. ,         0.,          0.,          1.        ]]
+
+                        )
         intrinsic_mat = np.array(
-        [[4.37470801e+03, 1.80489751e-05, 1.17978186e+03],
-        [0.00000000e+00, 4.38952051e+03, 4.72950500e+02],
-        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+ [[1.78220703e+03, 2.34147446e-05, 9.37881165e+02],
+ [0.00000000e+00, 1.75420679e+03, 4.49298096e+02],
+ [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+
+)
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
                         resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
     else:
