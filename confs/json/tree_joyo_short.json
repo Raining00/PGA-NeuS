@@ -19,7 +19,7 @@
     "image_type": "png",
     "R0": [0.6917, 0.6101, 0.3785, 0.0592],
     "T0": [-0.0586, -0.1555,  0.2664],
-    "init_v": [0, 0, -0.8],
+    "init_v": [0, 0, -0.0],
     "init_omega": [0, 0, 0],
     "with_fixed_camera": true,
     "fixed_camera_setting": {

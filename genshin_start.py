@@ -1233,7 +1233,7 @@ def render_sequence(genshinStart, rt_json_path, write_out_dir, image_count=1, re
             quaternion = quaternion.cpu()
             translation = translation.cpu()
             render_out_rgb = genshinStart.runner_object.render_novel_image_with_RTKM(q=quaternion,t=translation,
-   original_mat=original_mat, intrinsic_mat=intrinsic_mat, img_W=1920, img_H=1080, return_render_out=True, resolution_level=resolution_level)
+   original_mat=original_mat, intrinsic_mat=intrinsic_mat, img_W=genshinStart.W, img_H=genshinStart.H, return_render_out=True, resolution_level=resolution_level)
         write_out_path = write_out_dir + "/" + str(index) + ".png"
         print_blink("saving result image at " + write_out_path)
         cv.imwrite(write_out_path, render_out_rgb)
@@ -1292,28 +1292,28 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "refine_rt_sequence_100_yoyo_book_man_with_phy_init", "out.json")
-        write_out_dir = Path("debug", "render_result_sequence_100_yoyo_book_man_with_phy_init")
-        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="full", 
-                        resolution_level = 2)
+        rt_json_path = Path("debug", "joyo_init.json")
+        write_out_dir = Path("debug", "render_result_sequence_joyo_init_obj")
+        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="obj", 
+                        resolution_level = 1)
     elif args.mode == 'render_result_novel_view_full':
         rt_json_path = Path("debug", "PGA_yoyo_book_short.json")
-        write_out_dir = Path("debug", "render_result_sequence_for_PGA_yoyo_book_short_novel")
+        write_out_dir = Path("debug", "render_result_sequence_for_PGA_yoyo_book_short_novel__")
         camera_c2w = np.array( 
-[[-0.76185626,  0.26245168, -0.5921944,   0.41642544],
- [ 0.6474314,   0.33703586, -0.68354917,  0.4555921 ],
- [ 0.02019212, -0.9041714,  -0.4266923,   0.2712908 ],
- [ 0. ,         0.,          0.,          1.        ]]
-
-                        )
+[
+    [-0.76185626,  0.26245168, -0.5921944,   0.41642544],
+    [ 0.6474314,   0.33703586, -0.68354917,  0.4555921 ],
+    [ 0.02019212, -0.9041714,  -0.4266923,   0.2712908 ],
+    [ 0.,          0.,          0.,          1.        ]
+]
+ )
         intrinsic_mat = np.array(
- [[1.78220703e+03, 2.34147446e-05, 9.37881165e+02],
- [0.00000000e+00, 1.75420679e+03, 4.49298096e+02],
- [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
-
+        [[1.78206689e+03, 6.81166830e-06, 9.47171570e+02],
+        [0.00000000e+00, 1.75425305e+03, 4.59540192e+02],
+        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
 )
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
-                        resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
+                        resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 17)    
     else:
         train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_furina_test")
 """ 
@@ -1332,4 +1332,6 @@ python genshin_start.py --mode refine_rt --conf ./confs/json/furina.json --gpu 3
 python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/furina.json 
 python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/nahida.json --gpu 2
 python genshin_start.py --mode refine_rt_sequence_with_init_json --conf ./confs/json/yoyo_book_long_original.json --gpu 1
+
+python genshin_start.py --mode render_result_novel_view_full --conf ./confs/json/tree_slide_short.json --gpu 2 --image_count 18
 """

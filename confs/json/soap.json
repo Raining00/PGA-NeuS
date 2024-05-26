@@ -14,12 +14,14 @@
     "substep": 10, 
     "frame_dt": 0.0166667,
     "delta_frame": 3, 
-    "images_path": "./public_data/soap_dynamic1/image",
-    "masks_path": "./public_data/soap_dynamic1/mask",
+    "images_path": "./public_data/soap_geo_long/image",
+    "masks_path": "./public_data/soap_geo_long/mask",
     "pre_trained_RT": "./confs/json/out_refine_RT.json",
     "image_type": "png",
     "R0": [0.9150, -0.2691, -0.1273,  0.2763],
     "T0": [0.1536, -0.1478,  0.3126],
+    "init_v": [0, 0, 0],
+    "init_omega": [0, 0, 0],
     "with_fixed_camera": true,
     "fixed_camera_setting": {
         "M": [
