@@ -1,0 +1,70 @@
+{
+    "device": "cuda",
+    "static_background_path": "",
+    "static_mesh_path": "./exp/bunny_original/womask_white/meshes/bunny_original.obj",
+    "neus_object_conf_path": "./confs/thin_structure_white_bkgd.conf",
+    "neus_static_object_name": "bunny_original",
+    "neus_static_object_continue": true,
+    "neus_background_conf_path": "./confs/wmask.conf",
+    "neus_static_background_name": "slope_30",
+    "neus_static_background_continue": true,
+    "batch_size": 512,
+    "frame_counts": 20,
+    "split_range": 20,
+    "substep": 20, 
+    "frame_dt": 0.033333333,
+    "images_path": "./public_data/bunny_bounce2/image",
+    "masks_path": "./public_data/bunny_bounce2/mask",
+    "cameras_setting_path": "./confs/json/fixed_camera_setting.json",
+    "image_type": "png",
+    "init_v": [0, 0, 0],
+    "init_omega": [0, 0, 0],
+    "R0": [0.1830127090215683,-0.6830127239227295,-0.1830127090215683,-0.6830127239227295],
+    "T0": [0.1000, 0.40000, 0.25],
+    "with_fixed_camera": true,
+    "fixed_camera_setting": {
+        "M": [
+            [
+                1.0,
+                -0.0,
+                -0.0,
+                -0.10000000149011612
+            ],
+            [
+                0.0,
+                -0.9929816722869873,
+                0.1182689294219017,
+                0.09290292859077454
+            ],
+            [
+                0.0,
+                -0.1182689294219017,
+                -0.992981493473053,
+                1.11918306350708
+            ],
+            [
+                0.0,
+                -0.0,
+                -0.0,
+                1.0
+            ]
+        ],
+        "K": [
+            [
+                1111.1110311937682,
+                0.0,
+                400.0
+            ],
+            [
+                0.0,
+                1111.1110311937682,
+                300.0
+            ],
+            [
+                0.0,
+                0.0,
+                1.0
+            ]
+        ]
+    }
+}

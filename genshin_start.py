@@ -112,7 +112,7 @@ class GenshinStart(torch.nn.Module):
                   'substep':motion_data["substep"],
                   'split_range': motion_data["split_range"],
                   'kn': 0.95,
-                  'mu': 0.2,
+                  'mu': 0.1,
                   'init_v': motion_data["init_v"],
                   'init_omega': motion_data["init_omega"],                                       
                   'translation': motion_data['T0'],
@@ -553,7 +553,7 @@ class GenshinStart(torch.nn.Module):
                     background_rgb = None
                     # this render out contains grad & img loss, find out its reaction with phy simualtion
                     # start_time = time.time()
-                    pre_calc_c2w = self.calc_equivalent_camera_position(R=self.quaternion[f + 1].clone(), T=self.quaternion[f + 1].clone(), camera_c2w=orgin_mat_c2w.clone())
+                    pre_calc_c2w = self.calc_equivalent_camera_position(R=self.quaternion[f + 1].clone(), T=self.translation[f + 1].clone(), camera_c2w=orgin_mat_c2w.clone())
                     if pre_calc_c2w[2, 3] > 0: # pre judge if the equivalent rendering camera position has the z-value lower than 0
                         # use the default neus render
                         render_out = self.runner_object.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
@@ -564,7 +564,7 @@ class GenshinStart(torch.nn.Module):
                                                                             background_rgb=background_rgb)
                     else : # use the additional pose
                         # calc equivalent RT for this additional pose
-                        print_blink("using additional pose to render for equv calc camera-z < 0")
+                        # print_blink("using additional pose to render for equv calc camera-z < 0")
                         render_out = self.runner_object_additional.renderer.render_dynamic(rays_o=rays_o_batch, rays_d=rays_d_batch,
                                                                             near=near, far=far,
                                                                             T=self.translation[f + 1], R=self.quaternion[f + 1],
@@ -840,7 +840,8 @@ class GenshinStart(torch.nn.Module):
             rays_mask = zero_mask + inf_mask
             rays_mask = ~rays_mask
         depths = (depths.clip(near, far)) / far
-        # this is a calculation using progressive photon mapping to calculate depth for each single ray, upper is its refinement, using batch calculation
+        # this is a calculation using progressive photon mapping to calculate depth for each single ray, upper is its refinement
+        # , using batch calculation to accelerate the program with only one while logic term
         # depths = (1 / depths - 1 / near) / (1 / far - 1 / near)
         # for depth_index in range(0, len(rays_o)):
         #     ray_o, ray_d, tmp_sdf, acc_distance = rays_o[depth_index], rays_d[depth_index], 1, 0 # use 1 meter as default start
@@ -1024,8 +1025,8 @@ def get_optimizer(mode, genshinStart):
     elif mode == "refine_rt":
         optimizer = torch.optim.Adam(
             [
-                {'params': getattr(genshinStart, 'raw_translation'), 'lr': 3e-5},
-                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 3e-5},
+                {'params': getattr(genshinStart, 'raw_translation'), 'lr': 1e-3},
+                {'params': getattr(genshinStart, 'raw_quaternion'), 'lr': 1e-3},
             ],
             amsgrad=False
         )
@@ -1277,8 +1278,8 @@ if __name__ == '__main__':
         refine_RT(genshinStart=genshinStart, init_R=init_R, init_T=init_T, image_id=args.image_id, iters=200)
     elif args.mode == "refine_rt_sequence":
         init_R, init_T = torch.tensor([0.2254, -0.0434,  0.1564, -0.9657], dtype=torch.float32, requires_grad=True), torch.tensor([-0.089,  0.0444,  0.055], dtype=torch.float32, requires_grad=True)
-        # init_R, init_T = None, None # use none means system would apply R0 T0 in conf
-        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 35, write_out_folder=Path("debug", "refine_rt_sequence_100_yoyo"), iters=100)
+        init_R, init_T = None, None # use none means system would apply R0 T0 in conf
+        refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = args.image_count, write_out_folder=Path("debug", "refine_rt_sequence_GA_soap"), iters=100)
         # refine_RT_seqnuece(genshinStart=genshinStart, init_R=init_R, init_T=init_T, sequence_length = 24, write_out_folder=None, iters=50)
     elif args.mode == "refine_rt_sequence_with_init_json":
         init_json_path = "./debug/PA_joyo_short.json" # need to be specific in bash in the future
@@ -1292,30 +1293,42 @@ if __name__ == '__main__':
         write_out_path = str(write_out_path) + "/0.png"
         render_with_depth(genshinStart=genshinStart, image_index=0, translation=init_T, quaternion=init_R, write_out_path=write_out_path, resolution_level=1)
     elif args.mode == 'render_result_full':
-        rt_json_path = Path("debug", "joyo_init.json")
-        write_out_dir = Path("debug", "render_result_sequence_joyo_init_obj")
-        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="obj", 
-                        resolution_level = 1)
+        rt_json_path = Path("debug", "GA_tree_slide_short.json")
+        write_out_dir = Path("debug", "render_result_full_sequence_for_GA_tree_slide_short_obj")
+        render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir),
+                        image_count=args.image_count, render_option="obj", resolution_level = 1)
     elif args.mode == 'render_result_novel_view_full':
-        rt_json_path = Path("debug", "PGA_yoyo_book_short.json")
-        write_out_dir = Path("debug", "render_result_sequence_for_PGA_yoyo_book_short_novel__")
+        rt_json_path = Path("debug", "PGA_bunny_bounce.json")
+        write_out_dir = Path("debug", "render_result_sequence_for_PGA_bunny_bounce_novel_")
         camera_c2w = np.array( 
-[
-    [-0.76185626,  0.26245168, -0.5921944,   0.41642544],
-    [ 0.6474314,   0.33703586, -0.68354917,  0.4555921 ],
-    [ 0.02019212, -0.9041714,  -0.4266923,   0.2712908 ],
-    [ 0.,          0.,          0.,          1.        ]
-]
+[[-0.9999999999999998, 7.198293278059966e-17, -9.907600726170915e-17, 0.0],
+ [0.0, -0.8090169943749475, -0.587785252292473, 1.0],
+ [-1.224646799147353e-16, -0.587785252292473, 0.8090169943749472, -1.0],
+ [0.0, -0.0, -0.0, 1.0]]
  )
         intrinsic_mat = np.array(
-        [[1.78206689e+03, 6.81166830e-06, 9.47171570e+02],
-        [0.00000000e+00, 1.75425305e+03, 4.59540192e+02],
-        [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+        [
+            [
+                1111.1110311937682,
+                0.0,
+                400.0
+            ],
+            [
+                0.0,
+                1111.1110311937682,
+                300.0
+            ],
+            [
+                0.0,
+                0.0,
+                1.0
+            ]
+        ]
 )
         render_sequence(genshinStart=genshinStart, rt_json_path=str(rt_json_path), write_out_dir=str(write_out_dir), image_count=args.image_count, render_option="novel", 
-                        resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 17)    
+                        resolution_level = 1, camera_c2w=camera_c2w, intrinsic_mat=intrinsic_mat, start_idx= 0)    
     else:
-        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=100, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_furina_test")
+        train_dynamic(genshinStart.frame_counts, splite_range=genshinStart.split_range, iters=2, genshinStart=genshinStart, write_out_flag=True, train_mode="pic_mode", post_fix="_furina_test")
 """ 
 python genshin_start.py --mode debug --conf ./confs/json/nahida.json --gpu 1
 python genshin_start.py --mode refine_rt --conf ./confs/json/nahida.json --gpu 1

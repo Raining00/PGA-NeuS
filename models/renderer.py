@@ -421,7 +421,8 @@ class NeuSRenderer:
         # T1_expand = (transform_matrix[0:3, 3]).repeat(batch_size, 1)  # expand the trans, rays_o = 
         # rays_d = torch.matmul(rotate_mat[None, :3, :3], rays_d[:, :, None]).squeeze()  # batch_size, 3
         camera_pos = torch.matmul(transform_matrix_inv, camera_c2w)
-        rays_d = torch.matmul(transform_matrix_inv[None, :3, :3], rays_d[:, :, None]).squeeze()  # W, H, 3
+        rays_d = torch.matmul(transform_matrix_inv[None, :3, :3], rays_d[:, :, None]).squeeze(dim=-1)  # W, H, 3
+        # print(rays_d.shape)
         # rays_o = torch.matmul(camera_pos[None, :3, :3], rays_o[:, :, None]).squeeze()  # batch_size, 3
         # rays_o = rays_o + T1_expand  # batch_size 3, R1*T0 + T1
         rays_o = camera_pos[None, :3, 3].expand(rays_d.shape)  # W, H, 3
